@@ -341,22 +341,35 @@ export const report = {
         }
       }
     }
-    const rows = candidates.map((item) =>
-      `| ${escape(item.sourceFileName)} | ${item.page}:${item.line} | ${
-        escape(item.sourceLabel)
-      } | ${escape(item.valueText)} | ${escape(item.unit)} | ${
-        escape(
-          item.referenceKind === "table"
-            ? `table: ${item.referenceEvidence.length} lines`
-            : item.referenceText ?? "—",
-        )
-      } | ${escape(item.methodText ?? "—")} | ${item.analyteId ?? "unmapped"} |`
-    ).join("\n");
+    const rows = (items: Candidate[]) =>
+      items.map((item) =>
+        `| ${escape(item.sourceFileName)} | ${item.page}:${item.line} | ${
+          escape(item.sourceLabel)
+        } | ${escape(item.valueText)} | ${escape(item.unit)} | ${
+          escape(
+            item.referenceKind === "table"
+              ? `table: ${item.referenceEvidence.length} lines`
+              : item.referenceText ?? "—",
+          )
+        } | ${escape(item.methodText ?? "—")} | ${
+          item.analyteId ?? "unmapped"
+        } |`
+      ).join("\n");
+    const tables = [...new Set(candidates.map((item) => item.sourceFileName))]
+      .map((sourceFileName) => {
+        const tableRows = rows(
+          candidates.filter((item) => item.sourceFileName === sourceFileName),
+        );
+        return `## ${
+          escape(sourceFileName)
+        }\n\n| Line | Label | Value | Unit | Reference | Method | Mapping |\n| ---: | --- | ---: | --- | --- | --- | --- |\n${
+          tableRows.replaceAll(`| ${escape(sourceFileName)} | `, "|")
+        }`;
+      }).join("\n\n");
     return {
       markdown:
-        `# Draft measurement candidates\n\nThese are extracted candidates, not confirmed health records.\n\n| Source | Line | Label | Value | Unit | Reference | Method | Mapping |\n| --- | ---: | --- | ---: | --- | --- | --- | --- |\n${
-          rows ||
-          "| — | — | No measurement-shaped lines found | — | — | — | — |"
+        `# Draft measurement candidates\n\nThese are extracted candidates, not confirmed health records.\n\n${
+          tables || "No measurement-shaped lines found."
         }`,
       json: { status: "draft", candidates },
     };

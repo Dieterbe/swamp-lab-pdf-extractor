@@ -63,7 +63,9 @@ type MethodContext = {
     name: string,
     data: Record<string, unknown>,
   ) => Promise<{ name: string }>;
-  logger: { info: (message: string, properties?: Record<string, unknown>) => void };
+  logger: {
+    info: (message: string, properties?: Record<string, unknown>) => void;
+  };
 };
 
 /** Return a stable local resource name from a PDF file name. */
@@ -79,8 +81,9 @@ async function sha256(bytes: Uint8Array): Promise<string> {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   const digest = await crypto.subtle.digest("SHA-256", copy.buffer);
-  return Array.from(new Uint8Array(digest), (byte) =>
-    byte.toString(16).padStart(2, "0")
+  return Array.from(
+    new Uint8Array(digest),
+    (byte) => byte.toString(16).padStart(2, "0"),
   ).join("");
 }
 
@@ -115,9 +118,13 @@ function median(values: number[]): number {
 
 function combinedBounds(words: Word[]): Bounds {
   const left = Math.min(...words.map((word) => word.bounds.x));
-  const right = Math.max(...words.map((word) => word.bounds.x + word.bounds.width));
+  const right = Math.max(
+    ...words.map((word) => word.bounds.x + word.bounds.width),
+  );
   const bottom = Math.min(...words.map((word) => word.bounds.y));
-  const top = Math.max(...words.map((word) => word.bounds.y + word.bounds.height));
+  const top = Math.max(
+    ...words.map((word) => word.bounds.y + word.bounds.height),
+  );
   return { x: left, y: bottom, width: right - left, height: top - bottom };
 }
 
@@ -126,7 +133,11 @@ function joinWords(words: Word[]): string {
     if (index === 0) return word.text;
     const previous = words[index - 1];
     const gap = word.bounds.x - (previous.bounds.x + previous.bounds.width);
-    const typicalHeight = Math.max(previous.bounds.height, word.bounds.height, 1);
+    const typicalHeight = Math.max(
+      previous.bounds.height,
+      word.bounds.height,
+      1,
+    );
     const separator = gap > typicalHeight * 0.08 ? " " : "";
     return `${text}${separator}${word.text}`;
   }, "");
@@ -139,19 +150,29 @@ function joinWords(words: Word[]): string {
  */
 function groupIntoLines(words: Word[]): Line[] {
   if (words.length === 0) return [];
-  const tolerance = Math.max(1.5, median(words.map((word) => word.bounds.height)) * 0.55);
+  const tolerance = Math.max(
+    1.5,
+    median(words.map((word) => word.bounds.height)) * 0.55,
+  );
   const buckets: Word[][] = [];
 
-  for (const word of [...words].sort((left, right) => right.bounds.y - left.bounds.y)) {
+  for (
+    const word of [...words].sort((left, right) =>
+      right.bounds.y - left.bounds.y
+    )
+  ) {
     const bucket = buckets.find((current) =>
-      Math.abs(median(current.map((item) => item.bounds.y)) - word.bounds.y) <= tolerance
+      Math.abs(median(current.map((item) => item.bounds.y)) - word.bounds.y) <=
+        tolerance
     );
     if (bucket) bucket.push(word);
     else buckets.push([word]);
   }
 
   return buckets.map((bucket, index) => {
-    const ordered = [...bucket].sort((left, right) => left.bounds.x - right.bounds.x);
+    const ordered = [...bucket].sort((left, right) =>
+      left.bounds.x - right.bounds.x
+    );
     return {
       index,
       text: joinWords(ordered),
@@ -175,7 +196,9 @@ async function extractDocument(filePath: string): Promise<Document> {
       const page = await document.getPage(pageNumber);
       const textContent = await page.getTextContent();
       const items = (textContent as { items: unknown[] }).items;
-      const words = items.map(toWord).filter((word): word is Word => word !== null);
+      const words = items.map(toWord).filter((word): word is Word =>
+        word !== null
+      );
       pages.push({
         number: pageNumber,
         coordinateSystem: "pdf-points-origin-bottom-left" as const,
@@ -206,7 +229,9 @@ async function inputPaths(
   async function visit(directory: string): Promise<void> {
     for await (const entry of Deno.readDir(directory)) {
       const path = `${directory}/${entry.name}`;
-      if (entry.isFile && entry.name.toLowerCase().endsWith(".pdf")) paths.add(path);
+      if (entry.isFile && entry.name.toLowerCase().endsWith(".pdf")) {
+        paths.add(path);
+      }
       if (args.recursive && entry.isDirectory) await visit(path);
     }
   }
@@ -222,7 +247,9 @@ async function writeDocuments(
   filePaths: string[],
   context: MethodContext,
 ): Promise<{ dataHandles: Array<{ name: string }> }> {
-  context.logger.info("Extracting layout from {count} PDF(s)", { count: filePaths.length });
+  context.logger.info("Extracting layout from {count} PDF(s)", {
+    count: filePaths.length,
+  });
   const documents = await Promise.all(filePaths.map(extractDocument));
   const handles: Array<{ name: string }> = [];
   const usedNames = new Set<string>();
@@ -230,12 +257,16 @@ async function writeDocuments(
   for (const document of documents) {
     let name = resourceName(document.sourceFileName);
     let suffix = 2;
-    while (usedNames.has(name)) name = `${resourceName(document.sourceFileName)}-${suffix++}`;
+    while (usedNames.has(name)) {
+      name = `${resourceName(document.sourceFileName)}-${suffix++}`;
+    }
     usedNames.add(name);
     handles.push(await context.writeResource("document", name, document));
   }
 
-  context.logger.info("Created {count} draft layout document(s)", { count: handles.length });
+  context.logger.info("Created {count} draft layout document(s)", {
+    count: handles.length,
+  });
   return { dataHandles: handles };
 }
 
@@ -246,13 +277,17 @@ export const model = {
   globalArguments: GlobalArgsSchema,
   resources: {
     document: {
-      description: "Unconfirmed, coordinate-aware text layout extracted from one digital PDF",
+      description:
+        "Unconfirmed, coordinate-aware text layout extracted from one digital PDF",
       schema: DocumentSchema,
       lifetime: "infinite" as const,
       garbageCollection: 10,
     },
   },
-  reports: ["@dieter/lab-pdf-extractor-review", "@dieter/lab-pdf-candidate-review"],
+  reports: [
+    "@dieter/lab-pdf-extractor-review",
+    "@dieter/lab-pdf-candidate-review",
+  ],
   methods: {
     extract: {
       description: "Extract draft positioned text from one local digital PDF",
@@ -261,7 +296,8 @@ export const model = {
         await writeDocuments([args.filePath], context),
     },
     extractBatch: {
-      description: "Extract draft positioned text from multiple local digital PDFs",
+      description:
+        "Extract draft positioned text from multiple local digital PDFs",
       arguments: z.object({
         dirPath: z.string().min(1).optional(),
         filePaths: z.array(z.string().min(1)).min(1).optional(),
@@ -277,5 +313,5 @@ export const model = {
   },
 };
 
-/** Pure helpers exported solely for local unit tests. */
-export const testables = { groupIntoLines, joinWords, toWord };
+/** Test seams used only by local regression tests. */
+export const testables = { extractDocument, groupIntoLines, joinWords, toWord };
