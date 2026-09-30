@@ -30,7 +30,6 @@ type ReviewedDocument = {
 
 type Ledger = {
   schemaVersion: 1;
-  status: "draft" | "validated";
   documents: ReviewedDocument[];
 };
 
@@ -86,8 +85,8 @@ Deno.test({
     const ledger = JSON.parse(
       await Deno.readTextFile(manifestPath!),
     ) as Ledger;
-    if (ledger.schemaVersion !== 1 || ledger.status !== "validated") {
-      throw new Error("Private reviewed-records ledger is not yet validated.");
+    if (ledger.schemaVersion !== 1) {
+      throw new Error("Private reviewed-records ledger has an unsupported schema.");
     }
 
     for (const expected of ledger.documents) {

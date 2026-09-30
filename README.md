@@ -64,9 +64,9 @@ LAB_PDF_PRIVATE_FIXTURES_DIR=.private \
   extensions/private_review_server.ts
 ```
 
-The ledger is the private source of truth. A validated ledger can also drive
-local regression checks, so future parser changes are checked against reviewed
-PDFs without publishing health data:
+The ledger is the private source of truth. Reviewed records also drive local
+regression checks, so future parser changes are checked against reviewed PDFs
+without publishing health data:
 
 ```sh
 LAB_PDF_PRIVATE_FIXTURES_DIR=.private \

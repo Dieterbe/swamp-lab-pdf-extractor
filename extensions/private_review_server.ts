@@ -14,7 +14,6 @@ type Row = {
 };
 type Ledger = {
   schemaVersion: 1;
-  status: "draft" | "validated";
   documents: Array<
     { file: string; sourceSha256: string; pageCount: number; records: Row[] }
   >;
@@ -67,7 +66,7 @@ async function draft(): Promise<Ledger> {
       records,
     });
   }
-  return { schemaVersion: 1, status: "draft", documents };
+  return { schemaVersion: 1, documents };
 }
 async function load(): Promise<Ledger> {
   try {
@@ -85,7 +84,8 @@ function sameRecord(left: Row, right: Row): boolean {
     left.methodText === right.methodText;
 }
 
-async function latestWithApprovals(): Promise<Ledger> {
+/** Re-extract local PDFs and apply decisions only to matching candidates. */
+async function freshLedger(): Promise<Ledger> {
   const latest = await draft();
   const saved = await load();
   for (const document of latest.documents) {
@@ -141,33 +141,30 @@ const page = `<!doctype html>
   .document-choice.critical .document-file,.document-choice.critical .document-counts{color:var(--red)}
   .document-choice.approved.selected{box-shadow:inset 3px 0 var(--green)}.document-choice.warning.selected{box-shadow:inset 3px 0 var(--yellow)}.document-choice.critical.selected{box-shadow:inset 3px 0 var(--red)}
   .review-document>h2{padding:0;overflow-wrap:anywhere}
+  .loading{color:var(--yellow);letter-spacing:.05em;text-transform:uppercase}
   @media(max-width:950px){.shell{padding:28px 20px}.review-layout{display:block}.document-picker{max-height:none;position:static;margin-bottom:28px}.actions{flex-wrap:wrap}}
 </style>
 <div class="shell">
   <header><h1>Lab PDF review</h1><p class="description">Edit candidate rows, choose their decision, or add records.<br>Saving writes only <code>reviewed-records.json</code>.</p></header>
-  <main></main>
-  <footer class="actions"><button onclick="save('draft')">Save draft</button><button onclick="save('validated')">Mark validated</button></footer>
+  <main aria-busy="true"><p class="loading">Extracting PDFs…</p></main>
+  <footer class="actions"><button onclick="save()">Save</button></footer>
 </div>
 <script>
   let d,columns=[['status','Review'],['page','Page'],['sourceLabel','Analyte'],['valueText','Value'],['unit','Unit'],['referenceText','Reference'],['referenceKind','Reference type'],['methodText','Method']],cols=columns.map(([key])=>key);
   let esc=x=>String(x??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
   let displayFile=file=>esc(String(file??'').replace(/^fixtures\\//u,''));
-  async function init(){d=await (await fetch('/api/ledger')).json();render()}
+  async function init(){d=await (await fetch('/api/ledger')).json();document.querySelector('main').setAttribute('aria-busy','false');render()}
   function field(v,c,r){if(c==='status')return '<select class="status-control">'+['pending','approved','edited','rejected','added'].map(x=>'<option '+(x==v?'selected':'')+'>'+x+'</option>').join('')+'</select>';if(c==='referenceText'&&(r.referenceKind==='table'||String(v??'').includes('\\n'))){let rows=Math.min(8,Math.max(3,String(v??'').split('\\n').length));return '<textarea class="table-reference" rows="'+rows+'">'+esc(v)+'</textarea>'}return '<input value="'+esc(v)+'">'}
   function captureVisibleRows(){document.querySelectorAll('tr[data-d]').forEach(t=>{let r=d.documents[t.dataset.d].records[t.dataset.r];[...t.querySelectorAll('input,select,textarea')].forEach((e,i)=>r[cols[i]]=e.value||null);r.page=Number(r.page)})}
   function render(){document.querySelector('main').innerHTML=d.documents.map((x,i)=>'<h2>'+displayFile(x.file)+'</h2><table><tr>'+columns.map(([,label])=>'<th>'+label+'</th>').join('')+'</tr>'+x.records.map((r,j)=>'<tr data-d='+i+' data-r='+j+' data-state="'+r.status+'">'+cols.map(c=>'<td>'+field(r[c],c,r)+'</td>').join('')+'</tr>').join('')+'</table><button onclick="add('+i+')">Add row</button>').join('')}
   function add(i){captureVisibleRows();d.documents[i].records.push({status:'added',page:1,sourceLabel:'',valueText:'',unit:'',referenceText:null,referenceKind:'missing',methodText:null});render()}
-  async function save(status){captureVisibleRows();d.status=status;await fetch('/api/ledger',{method:'PUT',body:JSON.stringify(d)});alert('Saved '+status)}
+  async function save(){captureVisibleRows();await fetch('/api/ledger',{method:'PUT',body:JSON.stringify(d)});alert('Saved')}
   init()
 </script>`;
 Deno.serve(async (request) => {
   const url = new URL(request.url);
   if (url.pathname === "/api/ledger" && request.method === "GET") {
-    return Response.json(
-      url.searchParams.has("fresh")
-        ? await latestWithApprovals()
-        : await load(),
-    );
+    return Response.json(await freshLedger());
   }
   if (url.pathname === "/api/ledger" && request.method === "PUT") {
     const ledger = JSON.parse(await request.text());
@@ -180,8 +177,6 @@ Deno.serve(async (request) => {
   const documentPickerView = `<script>
     let currentDocument=0;
     let states=['pending','approved','edited','rejected','added'];
-    async function latest(){if(confirm('Replace this view with the latest extracted candidates? The saved ledger is unchanged until you save.')){d=await (await fetch('/api/ledger?fresh=1')).json();currentDocument=0;render()}}
-    document.querySelector('button[onclick="save(\\'draft\\')"]').insertAdjacentHTML('beforebegin','<button onclick="latest()">Load latest extraction</button>');
     function choose(i){captureVisibleRows();currentDocument=i;render()}
     function counts(x){return states.map(s=>[s,x.records.filter(r=>r.status===s).length]).filter(([,count])=>count>0).map(([state,count])=>state+': '+count).join(' · ')||'no candidates'}
     function health(x){let count=s=>x.records.filter(r=>r.status===s).length;if(count('rejected'))return 'critical';if(!x.records.length||count('pending')||count('added')||count('edited'))return 'warning';return 'approved'}
