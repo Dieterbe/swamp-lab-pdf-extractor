@@ -46,7 +46,10 @@ type DraftDocument = {
 };
 
 function markdownCell(text: string): string {
-  return text.replaceAll("\\", "\\\\").replaceAll("|", "\\|").replaceAll("\n", " ");
+  return text.replaceAll("\\", "\\\\").replaceAll("|", "\\|").replaceAll(
+    "\n",
+    " ",
+  );
 }
 
 function modelTypeName(value: unknown): string {
@@ -60,14 +63,17 @@ function modelTypeName(value: unknown): string {
 function isDraftDocument(value: unknown): value is DraftDocument {
   if (!value || typeof value !== "object") return false;
   const document = value as Partial<DraftDocument>;
-  return document.status === "draft" && typeof document.sourceFileName === "string" &&
+  return document.status === "draft" &&
+    typeof document.sourceFileName === "string" &&
     Array.isArray(document.pages);
 }
 
 /** Render one draft document as a readable, page-by-page Markdown review. */
 export function renderDocument(document: DraftDocument): string {
   const pages = document.pages.map((page) => {
-    const rows = page.lines.map((line) => `| ${line.index + 1} | ${markdownCell(line.text)} |`)
+    const rows = page.lines.map((line) =>
+      `| ${line.index + 1} | ${markdownCell(line.text)} |`
+    )
       .join("\n");
     return `### Page ${page.number}\n\n| Line | Extracted text |\n| ---: | --- |\n${rows}`;
   }).join("\n\n");
@@ -78,9 +84,11 @@ export function renderDocument(document: DraftDocument): string {
 }
 
 /** Local human-readable review of one extractor method execution. */
+/** Render the positioned-text draft for human inspection without confirmation. */
 export const report = {
   name: "@dieter/lab-pdf-extractor-review",
-  description: "Render local draft PDF layout extraction as page-by-page Markdown for human review",
+  description:
+    "Render local draft PDF layout extraction as page-by-page Markdown for human review",
   scope: "method" as const,
   labels: ["health", "local", "review"],
   execute: async (context: ReportContext) => {
@@ -100,16 +108,28 @@ export const report = {
     }
 
     const documents: DraftDocument[] = [];
-    for (const handle of context.dataHandles.filter((item) => item.specName === "document")) {
+    for (
+      const handle of context.dataHandles.filter((item) =>
+        item.specName === "document"
+      )
+    ) {
       const content = await context.dataRepository.getContent(
         modelType,
         context.modelId,
         handle.name,
         handle.version,
       );
-      if (!content) throw new Error("The extractor produced a document that the review report cannot read.");
+      if (!content) {
+        throw new Error(
+          "The extractor produced a document that the review report cannot read.",
+        );
+      }
       const parsed: unknown = JSON.parse(new TextDecoder().decode(content));
-      if (!isDraftDocument(parsed)) throw new Error("The extractor produced an unexpected document format.");
+      if (!isDraftDocument(parsed)) {
+        throw new Error(
+          "The extractor produced an unexpected document format.",
+        );
+      }
       documents.push(parsed);
     }
 
@@ -121,7 +141,9 @@ export const report = {
     }
 
     return {
-      markdown: `# PDF extraction review\n\n${documents.map(renderDocument).join("\n\n---\n\n")}`,
+      markdown: `# PDF extraction review\n\n${
+        documents.map(renderDocument).join("\n\n---\n\n")
+      }`,
       json: {
         applicable: true,
         available: true,

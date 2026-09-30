@@ -45,6 +45,7 @@ function escape(value: string): string {
   return value.replaceAll("|", "\\|").replaceAll("\n", " ");
 }
 
+/** An unconfirmed result-shaped line recovered from a PDF layout draft. */
 export type Candidate = {
   sourceFileName: string;
   page: number;
@@ -374,6 +375,7 @@ export function parseMeasurementBlock(
   return { candidate: parsed.candidate, endIndex: index + evidence.length - 1 };
 }
 
+/** Render unconfirmed measurement candidates for a completed local extraction. */
 export const report = {
   name: "@dieter/lab-pdf-candidate-review",
   description:

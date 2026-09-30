@@ -273,7 +273,7 @@ async function writeDocuments(
 /** Local, coordinate-aware digital-PDF layout extraction model. */
 export const model = {
   type: "@dieter/lab-pdf-extractor" as const,
-  version: "2026.09.27.1",
+  version: "2026.09.30.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     document: {
@@ -314,4 +314,5 @@ export const model = {
 };
 
 /** Test seams used only by local regression tests. */
+/** Internal extraction helpers exposed solely for local unit and regression tests. */
 export const testables = { extractDocument, groupIntoLines, joinWords, toWord };

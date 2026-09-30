@@ -1,0 +1,18 @@
+manifestVersion: 1
+name: "@dieter/lab-pdf-extractor"
+version: "2026.09.30.1"
+description: "Local digital-PDF laboratory-result extraction and human review"
+repository: "https://github.com/Dieterbe/swamp-lab-pdf-extractor"
+paths:
+  base: manifest
+models:
+  - extensions/models/lab_pdf_extractor.ts
+reports:
+  - extensions/reports/lab_pdf_candidate_review.ts
+  - extensions/reports/lab_pdf_extractor_review.ts
+include:
+  - extensions/catalog/analytes.ts
+additionalFiles:
+  - README.md
+  - LICENSE
+  - extensions/private_review_server.ts
