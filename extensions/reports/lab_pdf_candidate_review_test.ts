@@ -73,6 +73,28 @@ Deno.test("extracts a value-reference-unit result row", () => {
   ) throw new Error("Expected a value-reference-unit candidate");
 });
 
+Deno.test("accepts a unit extracted in the same cell as an aligned reference", () => {
+  const lines = [
+    line(4, "Platelet width 11.0 9 - 17.5 %", 40, 600, [
+      ["Platelet", 40], ["width", 85], ["11.0", 280], ["9", 355],
+      ["-", 370], ["17.5", 380], ["%", 355],
+    ]),
+    line(5, "(PDW)", 40, 588, [["(PDW)", 40]]),
+  ];
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    lines,
+    0,
+    { valueX: 278, unitX: 390, referenceX: 355, methodX: null },
+  );
+  if (
+    !block || block.candidate.sourceLabel !== "Platelet width (PDW)" ||
+    block.candidate.valueText !== "11.0" || block.candidate.unit !== "%" ||
+    block.candidate.referenceText !== "9 - 17.5"
+  ) throw new Error("Expected an aligned shared reference/unit cell");
+});
+
 Deno.test("extracts a position-validated result with an empty unit cell", () => {
   const candidate = parseLine(
     "example.pdf",
@@ -86,6 +108,100 @@ Deno.test("extracts a position-validated result with an empty unit cell", () => 
     candidate.valueText !== "3.16" || candidate.unit !== "" ||
     candidate.referenceText !== "< 6"
   ) throw new Error("Expected a unitless draft candidate");
+});
+
+Deno.test("extracts a qualitative result from a known measurement column", () => {
+  const lines = [
+    line(4, "Example finding NEGATIVE", 40, 600, [
+      ["Example", 40], ["finding", 85], ["NEGATIVE", 350],
+    ]),
+    line(5, "Other finding CLEAR", 40, 588, [
+      ["Other", 40], ["finding", 80], ["CLEAR", 355],
+    ]),
+    line(6, "Third finding PRESENT", 40, 576, [
+      ["Third", 40], ["finding", 80], ["PRESENT", 348],
+    ]),
+  ];
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    lines,
+    0,
+    null,
+  );
+  if (
+    !block || block.candidate.sourceLabel !== "Example finding" ||
+    block.candidate.valueText !== "NEGATIVE" || block.candidate.unit !== "" ||
+    block.candidate.referenceKind !== "missing"
+  ) throw new Error("Expected a qualitative result candidate");
+});
+
+Deno.test("extracts a value-only row surrounded by a merged reference cell", () => {
+  const lines = [
+    line(4, "< 20 mm/h Adults", 400, 612, [
+      ["<", 400], ["20", 415], ["mm/h", 435], ["Adults", 470],
+    ]),
+    line(5, "ESR 6", 40, 600, [["ESR", 40], ["6", 360]]),
+    line(6, "< 10 mm/h Children", 400, 588, [
+      ["<", 400], ["10", 415], ["mm/h", 435], ["Children", 470],
+    ]),
+  ];
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    lines,
+    1,
+    { valueX: 360, unitX: 460, referenceX: 400, methodX: null },
+  );
+  if (
+    !block || block.candidate.sourceLabel !== "ESR" ||
+    block.candidate.valueText !== "6" || block.candidate.unit !== "mm/h" ||
+    block.candidate.referenceKind !== "table" ||
+    block.candidate.referenceText !== "< 20 mm/h Adults\n< 10 mm/h Children"
+  ) throw new Error("Expected a value-only result with table reference");
+});
+
+Deno.test("rejects a value-only row without an adjacent reference cell", () => {
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    [line(4, "Unrelated count 6", 40, 600, [
+      ["Unrelated", 40], ["count", 90], ["6", 360],
+    ])],
+    0,
+    { valueX: 360, unitX: 460, referenceX: 400, methodX: null },
+  );
+  if (block !== null) throw new Error("Expected bare numeric text to be rejected");
+});
+
+Deno.test("rejects a spread-out metadata line as a qualitative result", () => {
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    [
+      line(4, "Person name Branch location", 40, 600, [
+        ["Person", 40], ["name", 95], ["Branch", 390], ["location", 490],
+      ]),
+    ],
+    0,
+    { valueX: 320, unitX: 350, referenceX: 410, methodX: 530 },
+  );
+  if (block !== null) throw new Error("Expected metadata to be rejected");
+});
+
+Deno.test("rejects an isolated compact footer as a qualitative result", () => {
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    [
+      line(4, "Contact details help@example.test", 40, 600, [
+        ["Contact", 40], ["details", 90], ["help@example.test", 350],
+      ]),
+    ],
+    0,
+    { valueX: 365, unitX: 0, referenceX: 410, methodX: null },
+  );
+  if (block !== null) throw new Error("Expected an isolated footer to be rejected");
 });
 
 Deno.test("extracts reference and unit from one positioned result cell", () => {

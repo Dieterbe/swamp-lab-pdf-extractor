@@ -10,12 +10,11 @@ type ExpectedCandidate =
     | "page"
     | "sourceLabel"
     | "valueText"
-    | "unit"
     | "referenceText"
     | "referenceKind"
     | "methodText"
   >
-  & { evidenceLineCount?: number };
+  & { unit: string | null; evidenceLineCount?: number };
 
 type ReviewedDocument = {
   file: string;
@@ -70,7 +69,7 @@ function matches(candidate: Candidate, expected: ExpectedCandidate): boolean {
   return candidate.page === expected.page &&
     candidate.sourceLabel === expected.sourceLabel &&
     candidate.valueText === expected.valueText &&
-    candidate.unit === expected.unit &&
+    (candidate.unit || null) === (expected.unit || null) &&
     candidate.referenceText === expected.referenceText &&
     candidate.referenceKind === expected.referenceKind &&
     candidate.methodText === expected.methodText &&

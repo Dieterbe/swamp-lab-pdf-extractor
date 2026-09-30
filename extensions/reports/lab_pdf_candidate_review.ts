@@ -85,6 +85,22 @@ function referenceKind(referenceText: string): "range" | "text" {
     : "text";
 }
 
+/**
+ * Recover a displayed unit from a reference table only when every numeric
+ * reference row that supplies one agrees. This preserves units printed in a
+ * vertically merged reference cell without guessing a unit from the analyte.
+ */
+function sharedReferenceUnit(referenceText: string): string | null {
+  const units = referenceText.split("\n").flatMap((line) => {
+    const match = /(?:[<>≤≥]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*-\s*\d+(?:[.,]\d+)?)\s+(?<unit>[^\s]+)/u
+      .exec(line);
+    return match?.groups?.unit ? [match.groups.unit] : [];
+  });
+  return units.length > 0 && units.every((unit) => unit === units[0])
+    ? units[0]
+    : null;
+}
+
 /** Find the first word printed after the unit; its x-coordinate begins the reference column. */
 function referenceStartX(line: Line, unit: string): number | null {
   const unitIndex = line.words.findIndex((word) => word.text === unit);
@@ -198,6 +214,66 @@ function parseMeasurement(
   };
 }
 
+/**
+ * Recover a numeric result whose unit and reference cells are vertically
+ * merged around a line containing only the label and value. The neighbouring
+ * reference cell is required; a bare number is never sufficient.
+ */
+function parseAlignedValueOnly(
+  sourceFileName: string,
+  page: number,
+  line: Line,
+  columns: ResultColumns | null,
+): ParsedMeasurement | null {
+  if (columns === null || line.text.includes(":")) return null;
+  const value = line.words.find((word) =>
+    /^[<>≤≥]?\d+(?:[.,]\d+)?$/u.test(word.text) &&
+    Math.abs(word.bounds.x - columns.valueX) <= 24
+  );
+  if (!value) return null;
+  const labelWords = line.words.filter((word) =>
+    word.bounds.x < columns.valueX - 12
+  );
+  // This form has no other populated cells. A line with content to the right
+  // is a different layout and must be handled by an explicit structural rule.
+  if (
+    labelWords.length === 0 ||
+    line.words.some((word) => word !== value && !labelWords.includes(word))
+  ) return null;
+  const rawLabel = labelWords.map((word) => word.text).join(" ").trim();
+  if (!rawLabel) return null;
+  const sourceCode = /^(\d{1,5}-\d)\b/u.exec(rawLabel)?.[1] ?? null;
+  const sourceLabel = rawLabel.replace(/^\d{1,5}-\d\s*(?:\(\*\)\s*)?/u, "")
+    .trim();
+  const normalized = normalise(sourceLabel);
+  const analyte = analytes.find((entry) =>
+    (sourceCode !== null && entry.sourceCodes.includes(sourceCode)) ||
+    entry.aliases.some((alias) => normalise(alias) === normalized)
+  );
+  return {
+    candidate: {
+      sourceFileName,
+      page,
+      line: line.index + 1,
+      sourceCode,
+      sourceLabel,
+      valueText: value.text,
+      unit: "",
+      referenceText: null,
+      referenceKind: "missing",
+      methodText: null,
+      referenceEvidence: [{ line: line.index + 1, text: line.text }],
+      analyteId: analyte?.id ?? null,
+      mappingStatus: analyte ? "matched" : "unmapped",
+    },
+    labelX: labelStartX(line, sourceCode),
+    valueX: value.bounds.x,
+    unitX: null,
+    referenceStartX: columns.referenceX,
+    referenceBeforeUnit: false,
+  };
+}
+
 /** Extract a measurement-shaped line; it never infers data absent from source text. */
 export function parseLine(
   sourceFileName: string,
@@ -284,9 +360,12 @@ function columnRelation(
 ): "reference" | "missing" | null {
   if (columns === null) return null;
   const tolerance = 24;
+  const unitSharesReferenceCell = parsed.unitX !== null &&
+    parsed.referenceStartX !== null &&
+    Math.abs(parsed.unitX - parsed.referenceStartX) <= tolerance;
   if (
     Math.abs(parsed.valueX - columns.valueX) > tolerance ||
-    (parsed.unitX !== null &&
+    (parsed.unitX !== null && !unitSharesReferenceCell &&
       Math.abs(parsed.unitX - columns.unitX) > tolerance)
   ) return null;
   if (
@@ -301,6 +380,107 @@ function columnRelation(
     (parsed.referenceStartX ?? 0) > columns.referenceX + tolerance
   ) return "missing";
   return null;
+}
+
+/** Infer a measurement column from repeated, widely separated label/value pairs. */
+function inferQualitativeValueX(lines: Line[]): number | null {
+  const starts = lines.flatMap((line) => {
+    if (line.text.includes(":") || line.words.length < 2) return [];
+    const words = [...line.words].sort((left, right) =>
+      left.bounds.x - right.bounds.x
+    );
+    if (words[0].bounds.x > 160) return [];
+    let widestGap = 0;
+    let valueIndex = -1;
+    for (let index = 1; index < words.length; index++) {
+      const gap = words[index].bounds.x -
+        (words[index - 1].bounds.x + words[index - 1].bounds.width);
+      if (gap > widestGap) {
+        widestGap = gap;
+        valueIndex = index;
+      }
+    }
+    return widestGap >= 72 && valueIndex >= 0
+      ? [words[valueIndex].bounds.x]
+      : [];
+  });
+  return starts.length >= 3 ? median(starts) : null;
+}
+
+/** Recover a text-valued result from a spatially inferred measurement column. */
+function qualitativeCells(line: Line, valueX: number | null): {
+  labelWords: Word[];
+  valueWords: Word[];
+} | null {
+  if (valueX === null || line.text.includes(":")) return null;
+  // Text values in a centred measurement cell can begin left of a numeric
+  // value. Keep a layout-derived margin while requiring a separate label cell.
+  const valueStartX = valueX - 64;
+  const labelWords = line.words.filter((word) => word.bounds.x < valueStartX);
+  const valueWords = line.words.filter((word) => word.bounds.x >= valueStartX);
+  if (labelWords.length === 0 || valueWords.length === 0) return null;
+  const valueSpread = Math.max(...valueWords.map((word) => word.bounds.x)) -
+    Math.min(...valueWords.map((word) => word.bounds.x));
+  // A qualitative result occupies one cell. Multiple widely spaced cells are
+  // metadata or a table heading, even if their first gap resembles a result.
+  if (valueSpread > 48) return null;
+  return { labelWords, valueWords };
+}
+
+function hasQualitativeNeighbour(
+  lines: Line[],
+  index: number,
+  valueX: number,
+): boolean {
+  return [lines[index - 1], lines[index + 1]].some((neighbour) => {
+    if (!neighbour) return false;
+    const verticalGap = Math.abs(lines[index].bounds.y - neighbour.bounds.y);
+    const maximumGap = Math.max(lines[index].bounds.height, neighbour.bounds.height) *
+      2.5;
+    if (verticalGap > maximumGap) return false;
+    if (qualitativeCells(neighbour, valueX) !== null) return true;
+    const parsed = parseMeasurement("", 0, neighbour);
+    return parsed !== null && Math.abs(parsed.valueX - valueX) <= 64;
+  });
+}
+
+function parseQualitativeMeasurement(
+  sourceFileName: string,
+  page: number,
+  lines: Line[],
+  index: number,
+  valueX: number | null,
+): Candidate | null {
+  const line = lines[index];
+  const cells = qualitativeCells(line, valueX);
+  if (cells === null || valueX === null ||
+    !hasQualitativeNeighbour(lines, index, valueX)) return null;
+  const { labelWords, valueWords } = cells;
+
+  const sourceLabel = labelWords.map((word) => word.text).join(" ").trim();
+  const valueText = valueWords.map((word) => word.text).join(" ").trim();
+  if (!sourceLabel || !valueText) return null;
+  const sourceCode = /^(\d{1,5}-\d)\b/u.exec(sourceLabel)?.[1] ?? null;
+  const normalized = normalise(sourceLabel);
+  const analyte = analytes.find((entry) =>
+    (sourceCode !== null && entry.sourceCodes.includes(sourceCode)) ||
+    entry.aliases.some((alias) => normalise(alias) === normalized)
+  );
+  return {
+    sourceFileName,
+    page,
+    line: line.index + 1,
+    sourceCode,
+    sourceLabel,
+    valueText,
+    unit: "",
+    referenceText: null,
+    referenceKind: "missing",
+    methodText: null,
+    referenceEvidence: [{ line: line.index + 1, text: line.text }],
+    analyteId: analyte?.id ?? null,
+    mappingStatus: analyte ? "matched" : "unmapped",
+  };
 }
 
 type ReferenceContinuation = { lines: Line[]; endIndex: number };
@@ -388,8 +568,33 @@ export function parseMeasurementBlock(
   index: number,
   columns: ResultColumns | null = inferResultColumns(lines),
 ): { candidate: Candidate; endIndex: number } | null {
-  const parsed = parseMeasurement(sourceFileName, page, lines[index]);
-  if (!parsed) return null;
+  let parsed = parseMeasurement(sourceFileName, page, lines[index]);
+  if (!parsed) {
+    const valueOnly = parseAlignedValueOnly(
+      sourceFileName,
+      page,
+      lines[index],
+      columns,
+    );
+    if (
+      valueOnly &&
+      (followingReferenceLines(lines, index, valueOnly, columns).lines.length >
+          0 ||
+        precedingReferenceLines(lines, index, valueOnly, columns).length > 0)
+    ) {
+      parsed = valueOnly;
+    }
+  }
+  if (!parsed) {
+    const candidate = parseQualitativeMeasurement(
+      sourceFileName,
+      page,
+      lines,
+      index,
+      columns?.valueX ?? inferQualitativeValueX(lines),
+    );
+    return candidate ? { candidate, endIndex: index } : null;
+  }
   const relation = columnRelation(parsed, columns);
   if (relation === null) return null;
   if (relation === "missing") {
@@ -445,18 +650,25 @@ export function parseMeasurementBlock(
   if (evidence.length > 1) {
     parsed.candidate.referenceKind = "table";
     parsed.candidate.referenceEvidence = evidence;
-    parsed.candidate.referenceText = evidenceLines.map((line) =>
-      line === lines[index]
-        ? referenceColumnText(
-          lines[index],
-          parsed.referenceStartX!,
-          columns?.methodX ?? null,
-          // A table can place both its unit and category in the reference
-          // cell. Keep the entire cell; the unit field remains separate.
-          null,
-        ) ?? line.text
-        : line.text
-    ).join("\n");
+    parsed.candidate.referenceText = evidenceLines.flatMap((line) => {
+      if (line !== lines[index]) return [line.text];
+      const ownReference = referenceColumnText(
+        lines[index],
+        parsed.referenceStartX!,
+        columns?.methodX ?? null,
+        // A table can place both its unit and category in the reference
+        // cell. Keep the entire cell; the unit field remains separate.
+        null,
+      );
+      // A value-only row has no reference text on its own line; its merged
+      // reference cell is represented entirely by the adjacent lines.
+      return ownReference === null ? [] : [ownReference];
+    }).join("\n");
+    if (!parsed.candidate.unit && parsed.candidate.referenceText) {
+      parsed.candidate.unit = sharedReferenceUnit(
+        parsed.candidate.referenceText,
+      ) ?? "";
+    }
   }
   return {
     candidate: parsed.candidate,
