@@ -52,6 +52,43 @@ Deno.test("extracts an unmapped measurement candidate from a result row", () => 
   ) throw new Error("Expected an unmapped draft candidate");
 });
 
+Deno.test("extracts a value-reference-unit result row", () => {
+  const candidate = parseLine(
+    "example.pdf",
+    1,
+    line(4, "Example analyte 4.2 3.5 - 5.2 mmol/L", 40, 600, [
+      ["Example", 40],
+      ["analyte", 85],
+      ["4.2", 180],
+      ["3.5", 260],
+      ["-", 280],
+      ["5.2", 295],
+      ["mmol/L", 340],
+    ]),
+  );
+  if (
+    !candidate || candidate.sourceLabel !== "Example analyte" ||
+    candidate.valueText !== "4.2" || candidate.referenceText !== "3.5 - 5.2" ||
+    candidate.unit !== "mmol/L"
+  ) throw new Error("Expected a value-reference-unit candidate");
+});
+
+Deno.test("extracts reference and unit from one positioned result cell", () => {
+  const candidate = parseLine(
+    "example.pdf",
+    1,
+    line(4, "Example (%) 4.2 3.5 - 5.2 %", 40, 600, [
+      ["Example (%)", 40],
+      ["4.2", 180],
+      ["3.5 - 5.2 %", 260],
+    ]),
+  );
+  if (
+    !candidate || candidate.referenceText !== "3.5 - 5.2" ||
+    candidate.unit !== "%"
+  ) throw new Error("Expected a combined reference-unit cell");
+});
+
 Deno.test("preserves a multiline reference block from its shared reference column", () => {
   const block = parseMeasurementBlock(
     "example.pdf",
@@ -87,8 +124,63 @@ Deno.test("preserves a multiline reference block from its shared reference colum
   );
   if (
     !block || block.candidate.referenceKind !== "table" ||
-    block.candidate.referenceEvidence.length !== 3 || block.endIndex !== 2
+    block.candidate.referenceEvidence.length !== 3 || block.endIndex !== 2 ||
+    block.candidate.referenceText !==
+      "GFR and the stages of\nchronic disease\n1 90+ Healthy"
   ) throw new Error("Expected generic table evidence");
+});
+
+Deno.test("appends a continuation aligned after a source code", () => {
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    [
+      line(4, "1234-5 Example analyte : 4 mg/dL 1 - 5", 40, 600, [
+        ["1234-5", 40],
+        ["Example", 74],
+        ["analyte", 119],
+        [":", 169],
+        ["4", 189],
+        ["mg/dL", 219],
+        ["1", 270],
+        ["-", 285],
+        ["5", 300],
+      ]),
+      line(5, "continuation", 74, 588),
+    ],
+    0,
+    { valueX: 189, unitX: 219, referenceX: 270, methodX: null },
+  );
+  if (
+    !block || block.candidate.sourceLabel !== "Example analyte continuation"
+  ) {
+    throw new Error("Expected the source-code-aligned continuation");
+  }
+});
+
+Deno.test("does not append a centered section heading to an analyte label", () => {
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    [
+      line(4, "Example analyte : 4 mg/dL 1 - 5", 40, 600, [
+        ["Example", 40],
+        ["analyte", 85],
+        [":", 135],
+        ["4", 155],
+        ["mg/dL", 185],
+        ["1", 270],
+        ["-", 285],
+        ["5", 300],
+      ]),
+      line(5, "NEXT SECTION", 245, 588),
+    ],
+    0,
+    { valueX: 155, unitX: 185, referenceX: 270, methodX: null },
+  );
+  if (!block || block.candidate.sourceLabel !== "Example analyte") {
+    throw new Error("Expected the centered heading to remain separate");
+  }
 });
 
 Deno.test("rejects prose that mimics a result row but has no result-table columns", () => {

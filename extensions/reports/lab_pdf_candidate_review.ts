@@ -63,9 +63,11 @@ export type Candidate = {
 
 type ParsedMeasurement = {
   candidate: Candidate;
+  labelX: number;
   valueX: number;
   unitX: number;
   referenceStartX: number | null;
+  referenceBeforeUnit: boolean;
 };
 
 type ResultColumns = {
@@ -94,6 +96,32 @@ function wordX(line: Line, text: string): number | null {
   return line.words.find((word) => word.text === text)?.bounds.x ?? null;
 }
 
+function firstWordX(line: Line, text: string): number | null {
+  return wordX(line, text) ?? wordX(line, text.trim().split(/\s+/u)[0]) ??
+    line.words.find((word) => word.text.includes(text))?.bounds.x ?? null;
+}
+
+function firstWordXAtOrAfter(
+  line: Line,
+  text: string,
+  minimumX: number,
+): number | null {
+  return line.words.find((word) =>
+    word.bounds.x >= minimumX &&
+    (word.text === text || word.text.includes(text))
+  )?.bounds.x ?? null;
+}
+
+function labelStartX(line: Line, sourceCode: string | null): number {
+  if (sourceCode !== null) {
+    const codeIndex = line.words.findIndex((word) => word.text === sourceCode);
+    if (codeIndex >= 0 && line.words[codeIndex + 1]) {
+      return line.words[codeIndex + 1].bounds.x;
+    }
+  }
+  return line.words[0]?.bounds.x ?? line.bounds.x;
+}
+
 function median(values: number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
@@ -107,9 +135,13 @@ function parseMeasurement(
   page: number,
   line: Line,
 ): ParsedMeasurement | null {
-  const match =
+  const unitBeforeReference =
     /^(?<label>.+?)\s*:\s*(?<value>[<>≤≥]?\s*\d+(?:[.,]\d+)?)\s+(?<unit>[^\s]+)\s+(?<reference>.+)$/u
       .exec(line.text);
+  const referenceBeforeUnit =
+    /^(?<label>.+?)\s+(?<value>[<>≤≥]?\s*\d+(?:[.,]\d+)?)\s+(?<reference>(?:[<>≤≥]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*-\s*\d+(?:[.,]\d+)?))\s+(?<unit>[^\s]+)(?:\s+.*)?$/u
+      .exec(line.text);
+  const match = unitBeforeReference ?? referenceBeforeUnit;
   if (!match?.groups) return null;
   const rawLabel = match.groups.label.trim();
   const sourceCode = /^(\d{1,5}-\d)\b/u.exec(rawLabel)?.[1] ?? null;
@@ -122,8 +154,14 @@ function parseMeasurement(
   );
   const referenceText = match.groups.reference.trim();
   const valueX = wordX(line, match.groups.value);
-  const unitX = wordX(line, match.groups.unit);
-  const referenceX = referenceStartX(line, match.groups.unit);
+  const referenceX = unitBeforeReference
+    ? referenceStartX(line, match.groups.unit)
+    : firstWordX(line, match.groups.reference);
+  const unitX = unitBeforeReference
+    ? firstWordX(line, match.groups.unit)
+    : referenceX === null
+    ? null
+    : firstWordXAtOrAfter(line, match.groups.unit, referenceX);
   // A positional parser must see separate value, unit, and reference fields.
   // Otherwise a prose header can mimic the text grammar of a result row.
   if (valueX === null || unitX === null || referenceX === null) return null;
@@ -143,9 +181,11 @@ function parseMeasurement(
       analyteId: analyte?.id ?? null,
       mappingStatus: analyte ? "matched" : "unmapped",
     },
+    labelX: labelStartX(line, sourceCode),
     valueX,
     unitX,
     referenceStartX: referenceX,
+    referenceBeforeUnit: referenceBeforeUnit !== null,
   };
 }
 
@@ -171,8 +211,9 @@ function inferResultColumns(lines: Line[]): ResultColumns | null {
   const referenceX = median(
     trusted.map((item) => item.parsed.referenceStartX ?? 0),
   );
-  const rightmostX = median(
-    trusted.map((item) =>
+  const methodRows = trusted.filter((item) => !item.parsed.referenceBeforeUnit);
+  const rightmostX = methodRows.length === 0 ? null : median(
+    methodRows.map((item) =>
       Math.max(...item.line.words.map((word) => word.bounds.x))
     ),
   );
@@ -180,13 +221,29 @@ function inferResultColumns(lines: Line[]): ResultColumns | null {
     valueX: median(trusted.map((item) => item.parsed.valueX)),
     unitX: median(trusted.map((item) => item.parsed.unitX)),
     referenceX,
-    methodX: rightmostX > referenceX + 24 ? rightmostX : null,
+    methodX: rightmostX !== null && rightmostX > referenceX + 24
+      ? rightmostX
+      : null,
   };
 }
 
 function wordsFromColumn(line: Line, columnX: number): string | null {
   const text = line.words.filter((word) => word.bounds.x >= columnX - 12)
     .map((word) => word.text).join(" ").trim();
+  return text || null;
+}
+
+function referenceColumnText(
+  line: Line,
+  referenceX: number,
+  methodX: number | null,
+  unitX: number | null,
+): string | null {
+  const text = line.words.filter((word) =>
+    word.bounds.x >= referenceX - 12 &&
+    (methodX === null || word.bounds.x < methodX - 12) &&
+    (unitX === null || word.bounds.x < unitX - 12)
+  ).map((word) => word.text).join(" ").trim();
   return text || null;
 }
 
@@ -258,7 +315,27 @@ export function parseMeasurementBlock(
     return { candidate: parsed.candidate, endIndex: index };
   }
 
-  isolateInlineRange(parsed.candidate, lines[index], columns!);
+  const labelContinuation = lines[index + 1];
+  const labelAlignmentTolerance = Math.max(
+    lines[index].bounds.height,
+    labelContinuation?.bounds.height ?? 0,
+  ) * 0.5;
+  if (
+    labelContinuation &&
+    lines[index].bounds.y - labelContinuation.bounds.y <=
+      Math.max(lines[index].bounds.height, labelContinuation.bounds.height) *
+        1.5 &&
+    Math.abs(labelContinuation.bounds.x - parsed.labelX) <=
+      labelAlignmentTolerance &&
+    !labelContinuation.text.includes(":")
+  ) {
+    parsed.candidate.sourceLabel =
+      `${parsed.candidate.sourceLabel} ${labelContinuation.text}`;
+  }
+
+  if (!parsed.referenceBeforeUnit) {
+    isolateInlineRange(parsed.candidate, lines[index], columns!);
+  }
 
   const evidence = [...parsed.candidate.referenceEvidence];
   let previous = lines[index];
@@ -281,6 +358,18 @@ export function parseMeasurementBlock(
   if (evidence.length > 1) {
     parsed.candidate.referenceKind = "table";
     parsed.candidate.referenceEvidence = evidence;
+    parsed.candidate.referenceText = evidence.map((item, evidenceIndex) =>
+      evidenceIndex === 0 && parsed.referenceBeforeUnit
+        ? parsed.candidate.referenceText ?? item.text
+        : evidenceIndex === 0
+        ? referenceColumnText(
+          lines[index],
+          parsed.referenceStartX!,
+          columns?.methodX ?? null,
+          parsed.referenceBeforeUnit ? parsed.unitX : null,
+        ) ?? item.text
+        : item.text
+    ).join("\n");
   }
   return { candidate: parsed.candidate, endIndex: index + evidence.length - 1 };
 }
