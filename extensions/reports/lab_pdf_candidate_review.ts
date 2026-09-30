@@ -1,4 +1,4 @@
-import { analytes } from "../catalog/analytes.ts";
+import { findAnalyte } from "../catalog/analytes.ts";
 
 const EXTRACTOR_TYPE = "@dieter/lab-pdf-extractor";
 type Handle = { name: string; specName?: string; version?: number };
@@ -35,12 +35,6 @@ function typeName(value: unknown): string {
     ? item.raw
     : "";
 }
-function normalise(value: string): string {
-  return value.toLocaleLowerCase().normalize("NFD").replace(
-    /\p{Diacritic}/gu,
-    "",
-  ).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-}
 function escape(value: string): string {
   return value.replaceAll("|", "\\|").replaceAll("\n", " ");
 }
@@ -52,6 +46,7 @@ export type Candidate = {
   line: number;
   sourceCode: string | null;
   sourceLabel: string;
+  sourceSection: string | null;
   valueText: string;
   unit: string;
   referenceText: string | null;
@@ -78,6 +73,11 @@ type ResultColumns = {
   methodX: number | null;
 };
 
+export type LayoutDocument = {
+  sourceFileName: string;
+  pages: Array<{ number: number; lines: Line[] }>;
+};
+
 function referenceKind(referenceText: string): "range" | "text" {
   return /^(?:[<>≤≥]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*-\s*\d+(?:[.,]\d+)?)/u
       .test(referenceText)
@@ -92,8 +92,9 @@ function referenceKind(referenceText: string): "range" | "text" {
  */
 function sharedReferenceUnit(referenceText: string): string | null {
   const units = referenceText.split("\n").flatMap((line) => {
-    const match = /(?:[<>≤≥]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*-\s*\d+(?:[.,]\d+)?)\s+(?<unit>[^\s]+)/u
-      .exec(line);
+    const match =
+      /(?:[<>≤≥]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*-\s*\d+(?:[.,]\d+)?)\s+(?<unit>[^\s]+)/u
+        .exec(line);
     return match?.groups?.unit ? [match.groups.unit] : [];
   });
   return units.length > 0 && units.every((unit) => unit === units[0])
@@ -168,11 +169,7 @@ function parseMeasurement(
   const sourceCode = /^(\d{1,5}-\d)\b/u.exec(rawLabel)?.[1] ?? null;
   const sourceLabel = rawLabel.replace(/^\d{1,5}-\d\s*(?:\(\*\)\s*)?/u, "")
     .trim();
-  const normalized = normalise(sourceLabel);
-  const analyte = analytes.find((entry) =>
-    (sourceCode !== null && entry.sourceCodes.includes(sourceCode)) ||
-    entry.aliases.some((alias) => normalise(alias) === normalized)
-  );
+  const analyte = findAnalyte(sourceLabel, sourceCode);
   const referenceText = match.groups.reference.trim();
   const valueX = wordX(line, match.groups.value);
   const referenceX = unitBeforeReference
@@ -197,6 +194,7 @@ function parseMeasurement(
       line: line.index + 1,
       sourceCode,
       sourceLabel,
+      sourceSection: null,
       valueText: match.groups.value,
       unit: match.groups.unit ?? "",
       referenceText,
@@ -245,11 +243,7 @@ function parseAlignedValueOnly(
   const sourceCode = /^(\d{1,5}-\d)\b/u.exec(rawLabel)?.[1] ?? null;
   const sourceLabel = rawLabel.replace(/^\d{1,5}-\d\s*(?:\(\*\)\s*)?/u, "")
     .trim();
-  const normalized = normalise(sourceLabel);
-  const analyte = analytes.find((entry) =>
-    (sourceCode !== null && entry.sourceCodes.includes(sourceCode)) ||
-    entry.aliases.some((alias) => normalise(alias) === normalized)
-  );
+  const analyte = findAnalyte(sourceLabel, sourceCode);
   return {
     candidate: {
       sourceFileName,
@@ -257,6 +251,7 @@ function parseAlignedValueOnly(
       line: line.index + 1,
       sourceCode,
       sourceLabel,
+      sourceSection: null,
       valueText: value.text,
       unit: "",
       referenceText: null,
@@ -305,15 +300,184 @@ function inferResultColumns(lines: Line[]): ResultColumns | null {
   return {
     valueX: median(trusted.map((item) => item.parsed.valueX)),
     unitX: median(
-      trusted.map((item) => item.parsed.unitX).filter((value): value is number =>
-        value !== null
-      ),
+      trusted.map((item) => item.parsed.unitX).filter((
+        value,
+      ): value is number => value !== null),
     ),
     referenceX,
     methodX: rightmostX !== null && rightmostX > referenceX + 24
       ? rightmostX
       : null,
   };
+}
+
+/**
+ * Identify a major source heading by its layout: a left-side description
+ * immediately followed by a table's value-column heading. This deliberately
+ * preserves the PDF wording and does not classify text by language or lab.
+ */
+function isMajorSectionHeading(
+  lines: Line[],
+  index: number,
+  columns: ResultColumns | null,
+): boolean {
+  const line = lines[index];
+  const following = lines[index + 1];
+  if (
+    !columns || !following || line.text.includes(":") ||
+    line.words.length === 0 || line.bounds.x >= columns.referenceX - 64 ||
+    line.words.some((word) => /\d/u.test(word.text))
+  ) {
+    return false;
+  }
+  if (isTextualTableHeader(line, columns)) return false;
+  if (
+    index > 0 && isTextualTableHeader(lines[index - 1], columns) &&
+    (index < 2 || !isMajorSectionHeading(lines, index - 2, columns))
+  ) {
+    return true;
+  }
+  const followingMeasurement = parseMeasurement("", 0, following);
+  const titleIsCentredOverResultColumns = line.bounds.x >= columns.valueX - 64;
+  const beginsNewTableWithResult = followingMeasurement !== null &&
+    columnRelation(followingMeasurement, columns) !== null &&
+    // A title immediately below a table header is a subsection within the
+    // table, not the beginning of an unrelated result table.
+    (index === 0 || !isTableHeaderAfterTitle(lines[index - 1], columns)) &&
+    // A heading directly beneath a detected major title belongs to that
+    // section. It is a grouping within the table, even when it uses the same
+    // left alignment as the title.
+    (index === 0 || !isMajorSectionHeading(lines, index - 1, columns)) &&
+    line.bounds.y - following.bounds.y <=
+      Math.max(line.bounds.height, following.bounds.height) * 3 &&
+    (index === 0 || titleIsCentredOverResultColumns ||
+      lines[index - 1].bounds.y - line.bounds.y >
+        Math.max(lines[index - 1].bounds.height, line.bounds.height) * 2.25);
+  if (beginsNewTableWithResult) return true;
+  const verticalGap = line.bounds.y - following.bounds.y;
+  const maximumGap = Math.max(line.bounds.height, following.bounds.height) *
+    3.5;
+  return verticalGap >= 0 && verticalGap <= maximumGap &&
+    isTableHeaderAfterTitle(following, columns);
+}
+
+function isTextualTableHeader(line: Line, columns: ResultColumns): boolean {
+  const textual = line.words.length > 0 &&
+    line.words.every((word) => !/\d/u.test(word.text));
+  const allInValueArea = line.words.length >= 2 &&
+    line.words.every((word) => word.bounds.x >= columns.valueX - 24);
+  const spansLabelAndValueAreas = line.words.length >= 3 &&
+    line.words.some((word) => word.bounds.x < columns.valueX - 24) &&
+    line.words.some((word) => word.bounds.x >= columns.valueX - 24);
+  return textual && (allInValueArea || spansLabelAndValueAreas);
+}
+
+/**
+ * A major title may be followed by a compact two-column table header. The
+ * first heading can sit a little left of the values, so this looser variant
+ * is used only for that title-to-header relationship, never to classify an
+ * arbitrary line as a table header.
+ */
+function isTableHeaderAfterTitle(line: Line, columns: ResultColumns): boolean {
+  return isTextualTableHeader(line, columns) ||
+    (line.words.length >= 2 &&
+      line.words.every((word) => !/\d/u.test(word.text)) &&
+      line.words.every((word) => word.bounds.x >= columns.valueX - 64));
+}
+
+/** Return the nearest preceding major heading on the same PDF page. */
+function isSubsectionHeading(
+  lines: Line[],
+  index: number,
+  columns: ResultColumns | null,
+): boolean {
+  const line = lines[index];
+  const following = lines[index + 1];
+  if (
+    !columns || !following || line.text.includes(":") ||
+    line.words.length === 0 || line.bounds.x >= columns.valueX - 64 ||
+    line.words.some((word) => /\d/u.test(word.text)) ||
+    /^\([^)]*\)$/u.test(line.text.trim())
+  ) return false;
+  const isColumnHeader = isTextualTableHeader(line, columns);
+  if (isColumnHeader || qualitativeCells(line, columns.valueX) !== null) {
+    return false;
+  }
+  const verticalGap = line.bounds.y - following.bounds.y;
+  const maximumGap = Math.max(line.bounds.height, following.bounds.height) *
+    2.5;
+  if (verticalGap < 0 || verticalGap > maximumGap) return false;
+  const numeric = parseMeasurement("", 0, following);
+  if (numeric !== null && columnRelation(numeric, columns) !== null) {
+    return true;
+  }
+  return qualitativeCells(following, columns.valueX) !== null;
+}
+
+/**
+ * Return the printed heading/subheading path. Letter-spaced headings are
+ * normalized only by removing the typography spaces between individual letters.
+ */
+function sourceSectionFor(
+  lines: Line[],
+  index: number,
+  columns: ResultColumns | null,
+): string | null {
+  let path: string[] = [];
+  for (let previous = 0; previous < index; previous++) {
+    if (isMajorSectionHeading(lines, previous, columns)) {
+      path = [sourceHeadingText(lines[previous])];
+    } else if (
+      columns !== null && isTextualTableHeader(lines[previous], columns) &&
+      (previous === 0 || !isMajorSectionHeading(lines, previous - 1, columns))
+    ) {
+      path = [];
+    } else if (isSubsectionHeading(lines, previous, columns)) {
+      const subsection = sourceHeadingText(lines[previous]);
+      path = path.length > 0 ? [path[0], subsection] : [subsection];
+    }
+  }
+  return path.length > 0 ? path.join(" / ") : null;
+}
+
+function sourceHeadingText(line: Line): string {
+  return line.words.map((word) =>
+    word.text.replace(
+      /(?:\p{L}\s+){2,}\p{L}/gu,
+      (match) => match.replace(/\s/gu, ""),
+    )
+  ).join(" ").trim();
+}
+
+function attachSourceSection(
+  candidate: Candidate,
+  lines: Line[],
+  index: number,
+  columns: ResultColumns | null,
+): Candidate {
+  candidate.sourceSection = sourceSectionFor(lines, index, columns);
+  const analyte = findAnalyte(
+    candidate.sourceLabel,
+    candidate.sourceCode,
+    candidate.sourceSection,
+  );
+  candidate.analyteId = analyte?.id ?? null;
+  candidate.mappingStatus = analyte ? "matched" : "unmapped";
+  return candidate;
+}
+
+function assignSourceSection(
+  candidate: Candidate,
+  sourceSection: string,
+): void {
+  candidate.sourceSection = sourceSection;
+  const analyte = findAnalyte(
+    candidate.sourceLabel,
+    candidate.sourceCode,
+    candidate.sourceSection,
+  );
+  candidate.analyteId = analyte?.id ?? null;
+  candidate.mappingStatus = analyte ? "matched" : "unmapped";
 }
 
 function wordsFromColumn(line: Line, columnX: number): string | null {
@@ -435,7 +599,8 @@ function hasQualitativeNeighbour(
   return [lines[index - 1], lines[index + 1]].some((neighbour) => {
     if (!neighbour) return false;
     const verticalGap = Math.abs(lines[index].bounds.y - neighbour.bounds.y);
-    const maximumGap = Math.max(lines[index].bounds.height, neighbour.bounds.height) *
+    const maximumGap =
+      Math.max(lines[index].bounds.height, neighbour.bounds.height) *
       2.5;
     if (verticalGap > maximumGap) return false;
     if (qualitativeCells(neighbour, valueX) !== null) return true;
@@ -453,25 +618,24 @@ function parseQualitativeMeasurement(
 ): Candidate | null {
   const line = lines[index];
   const cells = qualitativeCells(line, valueX);
-  if (cells === null || valueX === null ||
-    !hasQualitativeNeighbour(lines, index, valueX)) return null;
+  if (
+    cells === null || valueX === null ||
+    !hasQualitativeNeighbour(lines, index, valueX)
+  ) return null;
   const { labelWords, valueWords } = cells;
 
   const sourceLabel = labelWords.map((word) => word.text).join(" ").trim();
   const valueText = valueWords.map((word) => word.text).join(" ").trim();
   if (!sourceLabel || !valueText) return null;
   const sourceCode = /^(\d{1,5}-\d)\b/u.exec(sourceLabel)?.[1] ?? null;
-  const normalized = normalise(sourceLabel);
-  const analyte = analytes.find((entry) =>
-    (sourceCode !== null && entry.sourceCodes.includes(sourceCode)) ||
-    entry.aliases.some((alias) => normalise(alias) === normalized)
-  );
+  const analyte = findAnalyte(sourceLabel, sourceCode);
   return {
     sourceFileName,
     page,
     line: line.index + 1,
     sourceCode,
     sourceLabel,
+    sourceSection: null,
     valueText,
     unit: "",
     referenceText: null,
@@ -593,7 +757,12 @@ export function parseMeasurementBlock(
       index,
       columns?.valueX ?? inferQualitativeValueX(lines),
     );
-    return candidate ? { candidate, endIndex: index } : null;
+    return candidate
+      ? {
+        candidate: attachSourceSection(candidate, lines, index, columns),
+        endIndex: index,
+      }
+      : null;
   }
   const relation = columnRelation(parsed, columns);
   if (relation === null) return null;
@@ -601,10 +770,16 @@ export function parseMeasurementBlock(
     parsed.candidate.referenceKind = "missing";
     parsed.candidate.methodText = parsed.candidate.referenceText;
     parsed.candidate.referenceText = null;
-    return { candidate: parsed.candidate, endIndex: index };
+    return {
+      candidate: attachSourceSection(parsed.candidate, lines, index, columns),
+      endIndex: index,
+    };
   }
   if (parsed.referenceStartX === null) {
-    return { candidate: parsed.candidate, endIndex: index };
+    return {
+      candidate: attachSourceSection(parsed.candidate, lines, index, columns),
+      endIndex: index,
+    };
   }
 
   const labelContinuation = lines[index + 1];
@@ -671,9 +846,59 @@ export function parseMeasurementBlock(
     }
   }
   return {
-    candidate: parsed.candidate,
+    candidate: attachSourceSection(parsed.candidate, lines, index, columns),
     endIndex: index + forwardLines.length,
   };
+}
+
+/**
+ * Extract candidates from one document, preserving a section only across a
+ * page break that repeats the result-table header before otherwise unlabelled
+ * rows. This models a visually continuous table without carrying context into
+ * unrelated pages.
+ */
+export function extractMeasurementCandidates(
+  document: LayoutDocument,
+): Candidate[] {
+  const candidates: Candidate[] = [];
+  let precedingSection: string | null = null;
+
+  for (const page of document.pages) {
+    const columns = inferResultColumns(page.lines);
+    const pageCandidates: Candidate[] = [];
+    for (let index = 0; index < page.lines.length; index++) {
+      const block = parseMeasurementBlock(
+        document.sourceFileName,
+        page.number,
+        page.lines,
+        index,
+        columns,
+      );
+      if (!block) continue;
+      pageCandidates.push(block.candidate);
+      index = block.endIndex;
+    }
+
+    const firstCandidateLine = pageCandidates[0]?.line;
+    const repeatsTableHeader = firstCandidateLine !== undefined &&
+      columns !== null &&
+      page.lines.slice(0, firstCandidateLine - 1).some((line) =>
+        isTextualTableHeader(line, columns)
+      );
+    if (precedingSection !== null && repeatsTableHeader) {
+      for (const candidate of pageCandidates) {
+        if (candidate.sourceSection !== null) break;
+        assignSourceSection(candidate, precedingSection);
+      }
+    }
+
+    const lastSection = pageCandidates.toReversed().find((candidate) =>
+      candidate.sourceSection !== null
+    )?.sourceSection;
+    if (lastSection !== undefined) precedingSection = lastSection;
+    candidates.push(...pageCandidates);
+  }
+  return candidates;
 }
 
 /** Render unconfirmed measurement candidates for a completed local extraction. */
@@ -716,28 +941,15 @@ export const report = {
           "Candidate review received an unexpected draft document.",
         );
       }
-      for (const page of document.pages) {
-        const columns = inferResultColumns(page.lines);
-        for (let index = 0; index < page.lines.length; index++) {
-          const block = parseMeasurementBlock(
-            document.sourceFileName,
-            page.number,
-            page.lines,
-            index,
-            columns,
-          );
-          if (block) {
-            candidates.push(block.candidate);
-            index = block.endIndex;
-          }
-        }
-      }
+      candidates.push(...extractMeasurementCandidates(document));
     }
     const rows = (items: Candidate[]) =>
       items.map((item) =>
         `| ${escape(item.sourceFileName)} | ${item.page}:${item.line} | ${
           escape(item.sourceLabel)
-        } | ${escape(item.valueText)} | ${escape(item.unit)} | ${
+        } | ${escape(item.sourceSection ?? "—")} | ${
+          escape(item.valueText)
+        } | ${escape(item.unit)} | ${
           escape(
             item.referenceKind === "table"
               ? `table: ${item.referenceEvidence.length} lines`
@@ -754,7 +966,7 @@ export const report = {
         );
         return `## ${
           escape(sourceFileName)
-        }\n\n| Line | Label | Value | Unit | Reference | Method | Mapping |\n| ---: | --- | ---: | --- | --- | --- | --- |\n${
+        }\n\n| Line | Label | Source section | Value | Unit | Reference | Method | Mapping |\n| ---: | --- | --- | ---: | --- | --- | --- | --- |\n${
           tableRows.replaceAll(`| ${escape(sourceFileName)} | `, "|")
         }`;
       }).join("\n\n");

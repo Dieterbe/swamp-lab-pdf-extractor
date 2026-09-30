@@ -1,6 +1,6 @@
 import {
   type Candidate,
-  parseMeasurementBlock,
+  extractMeasurementCandidates,
 } from "../reports/lab_pdf_candidate_review.ts";
 import { testables } from "./lab_pdf_extractor.ts";
 
@@ -9,12 +9,17 @@ type ExpectedCandidate =
     Candidate,
     | "page"
     | "sourceLabel"
+    | "sourceSection"
     | "valueText"
     | "referenceText"
     | "referenceKind"
     | "methodText"
   >
-  & { unit: string | null; evidenceLineCount?: number };
+  & {
+    unit: string | null;
+    sourceSection?: string | null;
+    evidenceLineCount?: number;
+  };
 
 type ReviewedDocument = {
   file: string;
@@ -48,26 +53,17 @@ const manifestPath = privateRoot
 function candidates(
   document: Awaited<ReturnType<typeof testables.extractDocument>>,
 ): Candidate[] {
-  const extracted: Candidate[] = [];
-  for (const page of document.pages) {
-    for (let index = 0; index < page.lines.length; index++) {
-      const block = parseMeasurementBlock(
-        document.sourceFileName,
-        page.number,
-        page.lines,
-        index,
-      );
-      if (!block) continue;
-      extracted.push(block.candidate);
-      index = block.endIndex;
-    }
-  }
-  return extracted;
+  return extractMeasurementCandidates(document);
 }
 
 function matches(candidate: Candidate, expected: ExpectedCandidate): boolean {
+  const sourceSectionMatches = expected.sourceSection === undefined ||
+    candidate.sourceSection === expected.sourceSection ||
+    (candidate.sourceSection !== null && expected.sourceSection !== null &&
+      candidate.sourceSection.endsWith(` / ${expected.sourceSection}`));
   return candidate.page === expected.page &&
     candidate.sourceLabel === expected.sourceLabel &&
+    sourceSectionMatches &&
     candidate.valueText === expected.valueText &&
     (candidate.unit || null) === (expected.unit || null) &&
     candidate.referenceText === expected.referenceText &&
@@ -85,7 +81,9 @@ Deno.test({
       await Deno.readTextFile(manifestPath!),
     ) as Ledger;
     if (ledger.schemaVersion !== 1) {
-      throw new Error("Private reviewed-records ledger has an unsupported schema.");
+      throw new Error(
+        "Private reviewed-records ledger has an unsupported schema.",
+      );
     }
 
     for (const expected of ledger.documents) {

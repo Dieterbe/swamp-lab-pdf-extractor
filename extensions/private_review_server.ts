@@ -1,4 +1,4 @@
-import { parseMeasurementBlock } from "./reports/lab_pdf_candidate_review.ts";
+import { extractMeasurementCandidates } from "./reports/lab_pdf_candidate_review.ts";
 import { testables } from "./models/lab_pdf_extractor.ts";
 
 type Status = "pending" | "approved" | "edited" | "rejected" | "added";
@@ -6,6 +6,7 @@ type Row = {
   status: Status;
   page: number;
   sourceLabel: string;
+  sourceSection: string | null;
   valueText: string;
   unit: string | null;
   referenceText: string | null;
@@ -34,32 +35,19 @@ async function draft(): Promise<Ledger> {
     const document = await testables.extractDocument(
       `${root}/fixtures/${entry.name}`,
     );
-    const records: Row[] = [];
-    for (const page of document.pages) {
-      for (let index = 0; index < page.lines.length; index++) {
-        const block = parseMeasurementBlock(
-          document.sourceFileName,
-          page.number,
-          page.lines,
-          index,
-        );
-        if (!block) {
-          continue;
-        }
-        const candidate = block.candidate;
-        records.push({
-          status: "pending",
-          page: candidate.page,
-          sourceLabel: candidate.sourceLabel,
-          valueText: candidate.valueText,
-          unit: candidate.unit,
-          referenceText: candidate.referenceText,
-          referenceKind: candidate.referenceKind,
-          methodText: candidate.methodText,
-        });
-        index = block.endIndex;
-      }
-    }
+    const records: Row[] = extractMeasurementCandidates(document).map((
+      candidate,
+    ) => ({
+      status: "pending",
+      page: candidate.page,
+      sourceLabel: candidate.sourceLabel,
+      sourceSection: candidate.sourceSection,
+      valueText: candidate.valueText,
+      unit: candidate.unit,
+      referenceText: candidate.referenceText,
+      referenceKind: candidate.referenceKind,
+      methodText: candidate.methodText,
+    }));
     documents.push({
       file: `fixtures/${entry.name}`,
       sourceSha256: document.sourceSha256,
@@ -85,6 +73,13 @@ function sameRecord(left: Row, right: Row): boolean {
     left.referenceKind === right.referenceKind &&
     left.methodText === right.methodText;
 }
+function sameSourceSection(
+  actual: string | null,
+  saved: string | null,
+): boolean {
+  return actual === saved ||
+    (actual !== null && saved !== null && actual.endsWith(` / ${saved}`));
+}
 
 /** Re-extract local PDFs and apply decisions only to matching candidates. */
 async function freshLedger(): Promise<Ledger> {
@@ -102,7 +97,11 @@ async function freshLedger(): Promise<Ledger> {
       const matchingRecord = previous.records.find((item) =>
         sameRecord(item, record)
       );
-      record.matchesLedger = matchingRecord !== undefined;
+      record.matchesLedger = matchingRecord !== undefined &&
+        sameSourceSection(
+          record.sourceSection ?? null,
+          matchingRecord.sourceSection ?? null,
+        );
       if (matchingRecord) record.status = matchingRecord.status;
     }
   }
@@ -121,13 +120,12 @@ const page = `<!doctype html>
   h1,h2{font:inherit;letter-spacing:.08em;text-transform:uppercase;color:var(--cyan);margin:0}
   h1{font-size:18px} h2{font-size:12px}
   .description{max-width:72ch;color:var(--muted);margin:8px 0 0}
-  .current-file{color:var(--cyan);margin:8px 0 0;overflow-wrap:anywhere}
   button,input,select,textarea{font:inherit;border-radius:0}
   button{appearance:none;border:1px solid var(--line-strong);background:transparent;color:var(--cyan);cursor:pointer;padding:8px 10px;letter-spacing:.03em}
   button:hover,button:focus-visible{background:var(--surface-active);outline:none;border-color:var(--cyan)}
   button:focus-visible,input:focus,textarea:focus{outline:1px solid var(--yellow);outline-offset:2px}
   input,select,textarea{width:100%;background:transparent;border:0;color:var(--text);padding:3px 0}
-  .status-control{width:8.2rem;border-bottom:1px solid var(--line-strong);color:var(--yellow);outline:0}
+  .status-control{width:7.5rem;border-bottom:1px solid var(--line-strong);color:var(--yellow);outline:0}
   .status-control:focus{border-color:var(--cyan);outline:0}
   .status-control option{background:var(--surface);color:var(--text)}.status-control option:nth-child(1){color:var(--yellow)}.status-control option:nth-child(2){color:var(--green)}.status-control option:nth-child(3),.status-control option:nth-child(5){color:var(--yellow)}.status-control option:nth-child(4){color:var(--red)}
   tr[data-ledger-change="true"] td:first-child{box-shadow:inset 3px 0 var(--yellow)}
@@ -136,41 +134,36 @@ const page = `<!doctype html>
   td,th{border-bottom:1px solid var(--line);padding:6px 8px;vertical-align:top;text-align:left;overflow-wrap:anywhere}
   th{color:var(--muted);font-weight:400;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
   tr:last-child td{border-bottom:0} tr[data-state="approved"] select{color:var(--green)} tr[data-state="pending"] select{color:var(--yellow)} tr[data-state="rejected"] select{color:var(--red)}
-  th:nth-child(2),td:nth-child(2){width:3.5rem} th:nth-child(3),td:nth-child(3){width:30%;min-width:18rem} th:nth-child(4),td:nth-child(4){width:5rem} th:nth-child(7),td:nth-child(7){width:7rem}
+  th:nth-child(1),td:nth-child(1){width:8rem} th:nth-child(2),td:nth-child(2){width:3.5rem} th:nth-child(3),td:nth-child(3){width:21%;min-width:14rem} th:nth-child(4),td:nth-child(4){width:28%;min-width:17rem} th:nth-child(5),td:nth-child(5){width:5rem} th:nth-child(6),td:nth-child(6){width:5rem} th:nth-child(8),td:nth-child(8){width:7rem}
   .actions{display:flex;gap:10px}
   .save-notice{color:var(--green);font-size:11px;letter-spacing:.06em;opacity:0;text-transform:uppercase;transition:opacity .2s ease;white-space:nowrap}
   .save-notice.visible{opacity:1}
-  .review-layout{display:grid;grid-template-columns:minmax(18rem,23rem) minmax(0,1fr);gap:26px}
-  .document-picker{align-self:start;max-height:calc(100vh - 8rem);overflow:auto;position:sticky;top:24px}
-  .document-picker h2{padding:0 10px 8px}
-  .document-choice{display:block;margin:0 0 2px;width:100%;text-align:left;border:0;padding:10px}
-  .document-choice.selected{background:var(--surface-active);box-shadow:inset 3px 0 var(--yellow)}
-  .document-file{display:-webkit-box;color:var(--text);overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.35}.document-choice.selected .document-file{color:var(--cyan)}
-  .document-counts{display:block;color:var(--muted);font-size:11px;margin-top:4px;line-height:1.35}
-  .document-choice.approved .document-file,.document-choice.approved .document-counts{color:var(--green)}
-  .document-choice.warning .document-file,.document-choice.warning .document-counts{color:var(--yellow)}
-  .document-choice.critical .document-file,.document-choice.critical .document-counts{color:var(--red)}
-  .document-choice.approved.selected{box-shadow:inset 3px 0 var(--green)}.document-choice.warning.selected{box-shadow:inset 3px 0 var(--yellow)}.document-choice.critical.selected{box-shadow:inset 3px 0 var(--red)}
-  .review-document>h2{padding:0;overflow-wrap:anywhere}
+  .document-picker{position:relative;margin-top:14px;width:min(70vw,64rem)}
+  .document-trigger{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;width:100%;padding:8px 10px;text-align:left}
+  .document-trigger-label{color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}.document-trigger-file{color:var(--cyan);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.document-trigger-counts{color:var(--muted);font-size:11px;white-space:nowrap}
+  .document-trigger[data-health="approved"]{border-color:var(--green)}.document-trigger[data-health="approved"] .document-trigger-file{color:var(--green)}.document-trigger[data-health="warning"]{border-color:var(--yellow)}.document-trigger[data-health="warning"] .document-trigger-file{color:var(--yellow)}.document-trigger[data-health="critical"]{border-color:var(--red)}.document-trigger[data-health="critical"] .document-trigger-file{color:var(--red)}
+  .document-menu{position:absolute;z-index:20;top:calc(100% + 6px);left:0;width:100%;max-height:min(65vh,48rem);overflow:auto;border:1px solid var(--line-strong);background:var(--bg);padding:4px}
+  .document-choice{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;width:100%;border:0;border-left:3px solid transparent;padding:9px 10px;text-align:left}
+  .document-choice:hover,.document-choice:focus-visible{background:var(--surface-active);outline:0}.document-file{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.document-counts{color:var(--muted);font-size:11px;white-space:nowrap}
+  .document-choice.approved{border-left-color:var(--green)}.document-choice.approved .document-file{color:var(--green)}.document-choice.warning{border-left-color:var(--yellow)}.document-choice.warning .document-file{color:var(--yellow)}.document-choice.critical{border-left-color:var(--red)}.document-choice.critical .document-file{color:var(--red)}.document-choice.selected{background:var(--surface-active)}
   .loading{color:var(--yellow);letter-spacing:.05em;text-transform:uppercase}
-  @media(max-width:950px){.shell{padding:28px 20px}header{margin:-16px 0 22px}.review-layout{display:block}.document-picker{max-height:none;position:static;margin-bottom:28px}.actions{flex-wrap:wrap}}
+  @media(max-width:950px){.shell{padding:28px 20px}header{margin:-16px 0 22px}.header-content{gap:14px}.document-picker{width:64vw}.actions{flex-wrap:wrap}.document-trigger,.document-choice{grid-template-columns:minmax(0,1fr)}}
 </style>
 <div class="shell">
-  <header><div class="header-content"><div><h1>Lab PDF review</h1><p class="description">Edit candidate rows, choose their decision, or add records.<br>Saving writes only <code>reviewed-records.json</code>.</p><p id="current-file" class="current-file"></p></div><div class="actions"><span id="save-notice" class="save-notice" role="status" aria-live="polite"></span><button onclick="save()">Save</button></div></div></header>
+  <header><div class="header-content"><div><h1>Lab PDF review</h1><p class="description">Edit candidate rows, choose their decision, or add records.<br>Saving writes only <code>reviewed-records.json</code>.</p><div class="document-picker"><button id="document-trigger" class="document-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" onclick="toggleDocumentMenu()"></button><div id="document-menu" class="document-menu" role="listbox" hidden></div></div></div><div class="actions"><span id="save-notice" class="save-notice" role="status" aria-live="polite"></span><button onclick="save()">Save</button></div></div></header>
   <main aria-busy="true"><p class="loading">Extracting PDFs…</p></main>
 </div>
 <script>
-  let d,baseline,columns=[['status','Review'],['page','Page'],['sourceLabel','Analyte'],['valueText','Value'],['unit','Unit'],['referenceText','Reference'],['referenceKind','Reference type'],['methodText','Method']],cols=columns.map(([key])=>key);
+  let d,baseline,columns=[['status','Review'],['page','Page'],['sourceLabel','Analyte'],['sourceSection','Source section'],['valueText','Value'],['unit','Unit'],['referenceText','Reference'],['referenceKind','Reference type'],['methodText','Method']],cols=columns.map(([key])=>key);
   let esc=x=>String(x??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
   let displayFile=file=>esc(String(file??'').replace(/^fixtures\\//u,''));
-  let setCurrentFile=file=>document.querySelector('#current-file').textContent=String(file??'').replace(/^fixtures\\//u,'');
   async function init(){d=await (await fetch('/api/ledger')).json();baseline=structuredClone(d);document.querySelector('main').setAttribute('aria-busy','false');render()}
   function field(v,c,r){if(c==='status')return '<select class="status-control">'+['pending','approved','edited','rejected','added'].map(x=>'<option '+(x==v?'selected':'')+'>'+x+'</option>').join('')+'</select>';if(c==='referenceText'&&(r.referenceKind==='table'||String(v??'').includes('\\n'))){let rows=Math.min(8,Math.max(3,String(v??'').split('\\n').length));return '<textarea class="table-reference" rows="'+rows+'">'+esc(v)+'</textarea>'}return '<input value="'+esc(v)+'">'}
   function captureVisibleRows(){document.querySelectorAll('tr[data-d]').forEach(t=>{let r=d.documents[t.dataset.d].records[t.dataset.r];[...t.querySelectorAll('input,select,textarea')].forEach((e,i)=>r[cols[i]]=e.value||null);r.page=Number(r.page)})}
   function sameVisibleRecord(left,right){return cols.every(c=>c==='unit'?(left[c]||null)===(right[c]||null):(left[c]??null)===(right[c]??null))}
   function markUnsaved(t){let row=t.closest('tr[data-d]');if(!row)return;captureVisibleRows();let r=d.documents[row.dataset.d].records[row.dataset.r],original=baseline.documents[row.dataset.d]?.records[row.dataset.r];r.matchesLedger=original?.matchesLedger===true&&sameVisibleRecord(r,original);row.dataset.ledgerChange=String(r.matchesLedger===false)}
   function render(){document.querySelector('main').innerHTML=d.documents.map((x,i)=>'<h2>'+displayFile(x.file)+'</h2><table><tr>'+columns.map(([,label])=>'<th>'+label+'</th>').join('')+'</tr>'+x.records.map((r,j)=>'<tr data-d='+i+' data-r='+j+' data-state="'+r.status+'" data-ledger-change="'+(r.matchesLedger===false)+'">'+cols.map(c=>'<td>'+field(r[c],c,r)+'</td>').join('')+'</tr>').join('')+'</table><button onclick="add('+i+')">Add row</button>').join('')}
-  function add(i){captureVisibleRows();d.documents[i].records.push({status:'added',page:1,sourceLabel:'',valueText:'',unit:'',referenceText:null,referenceKind:'missing',methodText:null,matchesLedger:false});render()}
+  function add(i){captureVisibleRows();d.documents[i].records.push({status:'added',page:1,sourceLabel:'',sourceSection:null,valueText:'',unit:'',referenceText:null,referenceKind:'missing',methodText:null,matchesLedger:false});render()}
   let saveNoticeTimer;
   function showSaved(){let notice=document.querySelector('#save-notice');notice.textContent='Saved';notice.classList.add('visible');clearTimeout(saveNoticeTimer);saveNoticeTimer=setTimeout(()=>notice.classList.remove('visible'),2200)}
   async function save(){captureVisibleRows();await fetch('/api/ledger',{method:'PUT',body:JSON.stringify(d)});d.documents.forEach(x=>x.records.forEach(r=>r.matchesLedger=true));baseline=structuredClone(d);render();showSaved()}
@@ -193,12 +186,14 @@ Deno.serve(async (request) => {
     return new Response(null, { status: 204 });
   }
   const documentPickerView = `<script>
-    let currentDocument=0;
+    let currentDocument=0,documentMenuOpen=false;
     let states=['pending','approved','edited','rejected','added'];
-    function choose(i){captureVisibleRows();currentDocument=i;render()}
+    function choose(i){captureVisibleRows();currentDocument=i;documentMenuOpen=false;render()}
+    function toggleDocumentMenu(){documentMenuOpen=!documentMenuOpen;renderDocumentPicker()}
     function counts(x){return states.map(s=>[s,x.records.filter(r=>r.status===s).length]).filter(([,count])=>count>0).map(([state,count])=>state+': '+count).join(' · ')||'no candidates'}
     function health(x){let count=s=>x.records.filter(r=>r.status===s).length;if(count('rejected'))return 'critical';if(!x.records.length||count('pending')||count('added')||count('edited'))return 'warning';return 'approved'}
-    render=()=>{let x=d.documents[currentDocument];setCurrentFile(x.file);document.querySelector('main').innerHTML='<div class="review-layout"><aside class="document-picker"><h2>Documents</h2>'+d.documents.map((item,i)=>'<button class="document-choice '+health(item)+' '+(i===currentDocument?'selected':'')+'" onclick="choose('+i+')"><span class="document-file" title="'+displayFile(item.file)+'">'+displayFile(item.file)+'</span><span class="document-counts">'+counts(item)+'</span></button>').join('')+'</aside><section class="review-document"><table><tr>'+columns.map(([,label])=>'<th>'+label+'</th>').join('')+'</tr>'+x.records.map((r,j)=>'<tr data-d='+currentDocument+' data-r='+j+' data-state="'+r.status+'" data-ledger-change="'+(r.matchesLedger===false)+'" oninput="markUnsaved(this)" onchange="markUnsaved(this)">'+cols.map(c=>'<td>'+field(r[c],c,r)+'</td>').join('')+'</tr>').join('')+'</table><button onclick="add('+currentDocument+')">Add row</button></section></div>'}
+    function renderDocumentPicker(){let x=d.documents[currentDocument],trigger=document.querySelector('#document-trigger'),menu=document.querySelector('#document-menu');trigger.dataset.health=health(x);trigger.setAttribute('aria-expanded',String(documentMenuOpen));trigger.innerHTML='<span><span class="document-trigger-label">Document</span><br><span class="document-trigger-file" title="'+displayFile(x.file)+'">'+displayFile(x.file)+'</span></span><span class="document-trigger-counts">'+esc(counts(x))+'</span>';menu.hidden=!documentMenuOpen;menu.innerHTML=d.documents.map((item,i)=>'<button role="option" aria-selected="'+(i===currentDocument)+'" class="document-choice '+health(item)+' '+(i===currentDocument?'selected':'')+'" onclick="choose('+i+')"><span class="document-file" title="'+displayFile(item.file)+'">'+displayFile(item.file)+'</span><span class="document-counts">'+esc(counts(item))+'</span></button>').join('')}
+    render=()=>{let x=d.documents[currentDocument];renderDocumentPicker();document.querySelector('main').innerHTML='<section class="review-document"><table><tr>'+columns.map(([,label])=>'<th>'+label+'</th>').join('')+'</tr>'+x.records.map((r,j)=>'<tr data-d='+currentDocument+' data-r='+j+' data-state="'+r.status+'" data-ledger-change="'+(r.matchesLedger===false)+'" oninput="markUnsaved(this)" onchange="markUnsaved(this)">'+cols.map(c=>'<td>'+field(r[c],c,r)+'</td>').join('')+'</tr>').join('')+'</table><button onclick="add('+currentDocument+')">Add row</button></section>'}
   </script>`;
   return new Response(page + documentPickerView, {
     headers: { "content-type": "text/html; charset=utf-8" },

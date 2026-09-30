@@ -76,8 +76,13 @@ Deno.test("extracts a value-reference-unit result row", () => {
 Deno.test("accepts a unit extracted in the same cell as an aligned reference", () => {
   const lines = [
     line(4, "Platelet width 11.0 9 - 17.5 %", 40, 600, [
-      ["Platelet", 40], ["width", 85], ["11.0", 280], ["9", 355],
-      ["-", 370], ["17.5", 380], ["%", 355],
+      ["Platelet", 40],
+      ["width", 85],
+      ["11.0", 280],
+      ["9", 355],
+      ["-", 370],
+      ["17.5", 380],
+      ["%", 355],
     ]),
     line(5, "(PDW)", 40, 588, [["(PDW)", 40]]),
   ];
@@ -100,7 +105,11 @@ Deno.test("extracts a position-validated result with an empty unit cell", () => 
     "example.pdf",
     1,
     line(4, "Example index 3.16 < 6", 40, 600, [
-      ["Example", 40], ["index", 85], ["3.16", 180], ["<", 260], ["6", 275],
+      ["Example", 40],
+      ["index", 85],
+      ["3.16", 180],
+      ["<", 260],
+      ["6", 275],
     ]),
   );
   if (
@@ -113,13 +122,19 @@ Deno.test("extracts a position-validated result with an empty unit cell", () => 
 Deno.test("extracts a qualitative result from a known measurement column", () => {
   const lines = [
     line(4, "Example finding NEGATIVE", 40, 600, [
-      ["Example", 40], ["finding", 85], ["NEGATIVE", 350],
+      ["Example", 40],
+      ["finding", 85],
+      ["NEGATIVE", 350],
     ]),
     line(5, "Other finding CLEAR", 40, 588, [
-      ["Other", 40], ["finding", 80], ["CLEAR", 355],
+      ["Other", 40],
+      ["finding", 80],
+      ["CLEAR", 355],
     ]),
     line(6, "Third finding PRESENT", 40, 576, [
-      ["Third", 40], ["finding", 80], ["PRESENT", 348],
+      ["Third", 40],
+      ["finding", 80],
+      ["PRESENT", 348],
     ]),
   ];
   const block = parseMeasurementBlock(
@@ -136,14 +151,179 @@ Deno.test("extracts a qualitative result from a known measurement column", () =>
   ) throw new Error("Expected a qualitative result candidate");
 });
 
+Deno.test("attaches the nearest major source section to a result row", () => {
+  const lines = [
+    line(0, "URINE EXAMINATION", 40, 640, [["URINE", 40], ["EXAMINATION", 80]]),
+    line(1, "MEASUREMENT REFERENCE", 350, 628, [["MEASUREMENT", 350], [
+      "REFERENCE",
+      420,
+    ]]),
+    line(2, "Sugar NEGATIVE", 40, 610, [["Sugar", 40], ["NEGATIVE", 350]]),
+    line(3, "Protein NEGATIVE", 40, 598, [["Protein", 40], ["NEGATIVE", 350]]),
+  ];
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    lines,
+    2,
+    { valueX: 360, unitX: 400, referenceX: 440, methodX: null },
+  );
+  if (!block || block.candidate.sourceSection !== "URINE EXAMINATION") {
+    throw new Error(
+      "Expected the major heading to be retained as source context",
+    );
+  }
+});
+
+Deno.test("does not treat demographic text before a number as a section", () => {
+  const lines = [
+    line(0, "Sex Male", 40, 660, [["Sex", 40], ["Male", 90]]),
+    line(1, "Visit 123456", 350, 648, [["Visit", 350], ["123456", 400]]),
+    line(2, "BIOCHEMISTRY", 40, 630, [["BIOCHEMISTRY", 40]]),
+    line(3, "RESULT UNIT REFERENCE", 350, 618, [
+      ["RESULT", 350],
+      ["UNIT", 410],
+      ["REFERENCE", 470],
+    ]),
+    line(4, "Example 4.2 3 - 5 mmol/L", 40, 600, [
+      ["Example", 40],
+      ["4.2", 360],
+      ["3", 470],
+      ["-", 485],
+      ["5", 500],
+      ["mmol/L", 530],
+    ]),
+  ];
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    lines,
+    4,
+    { valueX: 360, unitX: 530, referenceX: 470, methodX: null },
+  );
+  if (!block || block.candidate.sourceSection !== "BIOCHEMISTRY") {
+    throw new Error("Expected the actual table heading, not demographic text");
+  }
+});
+
+Deno.test("preserves the printed major section and subsection", () => {
+  const lines = [
+    line(0, "URINE EXAMINATION", 40, 660, [["URINE", 40], ["EXAMINATION", 80]]),
+    line(1, "MEASUREMENT REFERENCE", 350, 648, [["MEASUREMENT", 350], [
+      "REFERENCE",
+      420,
+    ]]),
+    line(2, "CHEMICAL CHARACTERISTICS", 40, 630, [["CHEMICAL", 40], [
+      "CHARACTERISTICS",
+      95,
+    ]]),
+    line(3, "Sugar NEGATIVE", 40, 612, [["Sugar", 40], ["NEGATIVE", 350]]),
+    line(4, "Protein NEGATIVE", 40, 600, [["Protein", 40], ["NEGATIVE", 350]]),
+  ];
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    lines,
+    3,
+    { valueX: 360, unitX: 400, referenceX: 440, methodX: null },
+  );
+  if (
+    !block ||
+    block.candidate.sourceSection !==
+      "URINE EXAMINATION / CHEMICAL CHARACTERISTICS"
+  ) throw new Error("Expected the verbatim source heading/subheading path");
+});
+
+Deno.test("keeps adjacent result-group headings as siblings", () => {
+  const lines = [
+    line(0, "MEASUREMENT REFERENCE", 260, 660, [
+      ["MEASUREMENT", 260],
+      ["REFERENCE", 350],
+    ]),
+    line(1, "BLOOD EXAMINATION", 40, 640, [["BLOOD", 40], ["EXAMINATION", 80]]),
+    line(2, "WHITE CELL DIFFERENTIALS", 40, 620, [
+      ["WHITE", 40],
+      ["CELL", 80],
+      ["DIFFERENTIALS", 110],
+    ]),
+    line(3, "WBC 4.2 3 - 5", 40, 602, [
+      ["WBC", 40],
+      ["4.2", 260],
+      ["3", 350],
+      ["-", 365],
+      ["5", 380],
+    ]),
+    line(4, "RED CELLS", 40, 580, [["RED", 40], ["CELLS", 70]]),
+    line(5, "RBC 4.8 3 - 5", 40, 562, [
+      ["RBC", 40],
+      ["4.8", 260],
+      ["3", 350],
+      ["-", 365],
+      ["5", 380],
+    ]),
+  ];
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    lines,
+    5,
+    { valueX: 260, unitX: 400, referenceX: 350, methodX: null },
+  );
+  if (
+    !block || block.candidate.sourceSection !== "BLOOD EXAMINATION / RED CELLS"
+  ) {
+    throw new Error("Expected the second result group to replace its sibling");
+  }
+});
+
+Deno.test("retains a centred source heading above a textual table header", () => {
+  const lines = [
+    line(0, "BIOCHEMISTRY (blood)", 240, 640, [["BIOCHEMISTRY", 240], [
+      "(blood)",
+      320,
+    ]]),
+    line(1, "TEST RESULT UNIT REFERENCE", 30, 628, [
+      ["TEST", 30],
+      ["RESULT", 270],
+      ["UNIT", 350],
+      ["REFERENCE", 430],
+    ]),
+    line(2, "Example : 4.2 mmol/L 3 - 5", 40, 610, [
+      ["Example", 40],
+      [":", 100],
+      ["4.2", 270],
+      ["mmol/L", 350],
+      ["3", 430],
+      ["-", 445],
+      ["5", 460],
+    ]),
+  ];
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    lines,
+    2,
+    { valueX: 270, unitX: 350, referenceX: 430, methodX: null },
+  );
+  if (!block || block.candidate.sourceSection !== "BIOCHEMISTRY (blood)") {
+    throw new Error("Expected centred source heading to be retained");
+  }
+});
+
 Deno.test("extracts a value-only row surrounded by a merged reference cell", () => {
   const lines = [
     line(4, "< 20 mm/h Adults", 400, 612, [
-      ["<", 400], ["20", 415], ["mm/h", 435], ["Adults", 470],
+      ["<", 400],
+      ["20", 415],
+      ["mm/h", 435],
+      ["Adults", 470],
     ]),
     line(5, "ESR 6", 40, 600, [["ESR", 40], ["6", 360]]),
     line(6, "< 10 mm/h Children", 400, 588, [
-      ["<", 400], ["10", 415], ["mm/h", 435], ["Children", 470],
+      ["<", 400],
+      ["10", 415],
+      ["mm/h", 435],
+      ["Children", 470],
     ]),
   ];
   const block = parseMeasurementBlock(
@@ -166,12 +346,16 @@ Deno.test("rejects a value-only row without an adjacent reference cell", () => {
     "example.pdf",
     1,
     [line(4, "Unrelated count 6", 40, 600, [
-      ["Unrelated", 40], ["count", 90], ["6", 360],
+      ["Unrelated", 40],
+      ["count", 90],
+      ["6", 360],
     ])],
     0,
     { valueX: 360, unitX: 460, referenceX: 400, methodX: null },
   );
-  if (block !== null) throw new Error("Expected bare numeric text to be rejected");
+  if (block !== null) {
+    throw new Error("Expected bare numeric text to be rejected");
+  }
 });
 
 Deno.test("rejects a spread-out metadata line as a qualitative result", () => {
@@ -180,7 +364,10 @@ Deno.test("rejects a spread-out metadata line as a qualitative result", () => {
     1,
     [
       line(4, "Person name Branch location", 40, 600, [
-        ["Person", 40], ["name", 95], ["Branch", 390], ["location", 490],
+        ["Person", 40],
+        ["name", 95],
+        ["Branch", 390],
+        ["location", 490],
       ]),
     ],
     0,
@@ -195,13 +382,17 @@ Deno.test("rejects an isolated compact footer as a qualitative result", () => {
     1,
     [
       line(4, "Contact details help@example.test", 40, 600, [
-        ["Contact", 40], ["details", 90], ["help@example.test", 350],
+        ["Contact", 40],
+        ["details", 90],
+        ["help@example.test", 350],
       ]),
     ],
     0,
     { valueX: 365, unitX: 0, referenceX: 410, methodX: null },
   );
-  if (block !== null) throw new Error("Expected an isolated footer to be rejected");
+  if (block !== null) {
+    throw new Error("Expected an isolated footer to be rejected");
+  }
 });
 
 Deno.test("extracts reference and unit from one positioned result cell", () => {
@@ -264,13 +455,20 @@ Deno.test("preserves a multiline reference block from its shared reference colum
 Deno.test("assigns a vertically merged reference cell to its centred result", () => {
   const lines = [
     line(4, "HDL 75 > 40 mg/dL", 40, 600, [
-      ["HDL", 40], ["75", 180], ["> 40", 270], ["mg/dL", 320],
+      ["HDL", 40],
+      ["75", 180],
+      ["> 40", 270],
+      ["mg/dL", 320],
     ]),
     line(5, "< 100 mg/dL moderate risk", 270, 588),
     line(6, "high risk", 270, 576),
     line(7, "LDL 152 116 - 129 mg/dL", 40, 564, [
-      ["LDL", 40], ["152", 180], ["116", 270], ["-", 290],
-      ["129", 305], ["mg/dL", 340],
+      ["LDL", 40],
+      ["152", 180],
+      ["116", 270],
+      ["-", 290],
+      ["129", 305],
+      ["mg/dL", 340],
     ]),
     line(8, "130 - 159 mg/dL", 270, 552),
   ];
