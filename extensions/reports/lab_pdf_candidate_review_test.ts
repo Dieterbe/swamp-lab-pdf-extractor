@@ -73,6 +73,21 @@ Deno.test("extracts a value-reference-unit result row", () => {
   ) throw new Error("Expected a value-reference-unit candidate");
 });
 
+Deno.test("extracts a position-validated result with an empty unit cell", () => {
+  const candidate = parseLine(
+    "example.pdf",
+    1,
+    line(4, "Example index 3.16 < 6", 40, 600, [
+      ["Example", 40], ["index", 85], ["3.16", 180], ["<", 260], ["6", 275],
+    ]),
+  );
+  if (
+    !candidate || candidate.sourceLabel !== "Example index" ||
+    candidate.valueText !== "3.16" || candidate.unit !== "" ||
+    candidate.referenceText !== "< 6"
+  ) throw new Error("Expected a unitless draft candidate");
+});
+
 Deno.test("extracts reference and unit from one positioned result cell", () => {
   const candidate = parseLine(
     "example.pdf",
@@ -128,6 +143,30 @@ Deno.test("preserves a multiline reference block from its shared reference colum
     block.candidate.referenceText !==
       "GFR and the stages of\nchronic disease\n1 90+ Healthy"
   ) throw new Error("Expected generic table evidence");
+});
+
+Deno.test("assigns a vertically merged reference cell to its centred result", () => {
+  const lines = [
+    line(4, "HDL 75 > 40 mg/dL", 40, 600, [
+      ["HDL", 40], ["75", 180], ["> 40", 270], ["mg/dL", 320],
+    ]),
+    line(5, "< 100 mg/dL moderate risk", 270, 588),
+    line(6, "high risk", 270, 576),
+    line(7, "LDL 152 116 - 129 mg/dL", 40, 564, [
+      ["LDL", 40], ["152", 180], ["116", 270], ["-", 290],
+      ["129", 305], ["mg/dL", 340],
+    ]),
+    line(8, "130 - 159 mg/dL", 270, 552),
+  ];
+  const columns = { valueX: 180, unitX: 340, referenceX: 270, methodX: null };
+  const hdl = parseMeasurementBlock("example.pdf", 1, lines, 0, columns);
+  const ldl = parseMeasurementBlock("example.pdf", 1, lines, 3, columns);
+  if (
+    !hdl || hdl.candidate.referenceText !== "> 40" ||
+    !ldl || ldl.candidate.referenceKind !== "table" ||
+    ldl.candidate.referenceText !==
+      "< 100 mg/dL moderate risk\nhigh risk\n116 - 129 mg/dL\n130 - 159 mg/dL"
+  ) throw new Error("Expected the merged reference cell to stay with LDL");
 });
 
 Deno.test("appends a continuation aligned after a source code", () => {

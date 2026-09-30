@@ -27,6 +27,12 @@ translation, and automatic confirmation of health records are not implemented
 yet. Manual review remains required because a layout match is evidence, not
 proof that a candidate represents the source correctly.
 
+Some reports omit a unit. We preserve that omission in extraction and review.
+Downstream consumers may opt to apply heuristics during analysis or processing.
+E.g.:
+
+- a unitless VLDL result with a `< 32` reference is most likely in mg/dL.
+
 ## Use
 
 Install the extension, create a model, and extract a directory of PDFs:

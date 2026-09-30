@@ -66,7 +66,7 @@ type ParsedMeasurement = {
   candidate: Candidate;
   labelX: number;
   valueX: number;
-  unitX: number;
+  unitX: number | null;
   referenceStartX: number | null;
   referenceBeforeUnit: boolean;
 };
@@ -142,8 +142,12 @@ function parseMeasurement(
   const referenceBeforeUnit =
     /^(?<label>.+?)\s+(?<value>[<>≤≥]?\s*\d+(?:[.,]\d+)?)\s+(?<reference>(?:[<>≤≥]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*-\s*\d+(?:[.,]\d+)?))\s+(?<unit>[^\s]+)(?:\s+.*)?$/u
       .exec(line.text);
-  const match = unitBeforeReference ?? referenceBeforeUnit;
+  const withoutUnit =
+    /^(?<label>.+?)\s+(?<value>[<>≤≥]?\s*\d+(?:[.,]\d+)?)\s+(?<reference>(?:[<>≤≥]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*-\s*\d+(?:[.,]\d+)?))$/u
+      .exec(line.text);
+  const match = unitBeforeReference ?? referenceBeforeUnit ?? withoutUnit;
   if (!match?.groups) return null;
+  const isUnitless = withoutUnit !== null;
   const rawLabel = match.groups.label.trim();
   const sourceCode = /^(\d{1,5}-\d)\b/u.exec(rawLabel)?.[1] ?? null;
   const sourceLabel = rawLabel.replace(/^\d{1,5}-\d\s*(?:\(\*\)\s*)?/u, "")
@@ -160,12 +164,16 @@ function parseMeasurement(
     : firstWordX(line, match.groups.reference);
   const unitX = unitBeforeReference
     ? firstWordX(line, match.groups.unit)
-    : referenceX === null
+    : isUnitless || referenceX === null
     ? null
     : firstWordXAtOrAfter(line, match.groups.unit, referenceX);
-  // A positional parser must see separate value, unit, and reference fields.
-  // Otherwise a prose header can mimic the text grammar of a result row.
-  if (valueX === null || unitX === null || referenceX === null) return null;
+  // A positional parser needs result and reference columns. A unit is optional
+  // only when its cell is empty; this admits unitless results without accepting
+  // prose that merely resembles a result row.
+  if (
+    valueX === null || referenceX === null ||
+    (!isUnitless && unitX === null)
+  ) return null;
   return {
     candidate: {
       sourceFileName,
@@ -174,7 +182,7 @@ function parseMeasurement(
       sourceCode,
       sourceLabel,
       valueText: match.groups.value,
-      unit: match.groups.unit,
+      unit: match.groups.unit ?? "",
       referenceText,
       referenceKind: referenceKind(referenceText),
       methodText: null,
@@ -220,7 +228,11 @@ function inferResultColumns(lines: Line[]): ResultColumns | null {
   );
   return {
     valueX: median(trusted.map((item) => item.parsed.valueX)),
-    unitX: median(trusted.map((item) => item.parsed.unitX)),
+    unitX: median(
+      trusted.map((item) => item.parsed.unitX).filter((value): value is number =>
+        value !== null
+      ),
+    ),
     referenceX,
     methodX: rightmostX !== null && rightmostX > referenceX + 24
       ? rightmostX
@@ -274,7 +286,8 @@ function columnRelation(
   const tolerance = 24;
   if (
     Math.abs(parsed.valueX - columns.valueX) > tolerance ||
-    Math.abs(parsed.unitX - columns.unitX) > tolerance
+    (parsed.unitX !== null &&
+      Math.abs(parsed.unitX - columns.unitX) > tolerance)
   ) return null;
   if (
     Math.abs((parsed.referenceStartX ?? 0) - columns.referenceX) <= tolerance
@@ -288,6 +301,79 @@ function columnRelation(
     (parsed.referenceStartX ?? 0) > columns.referenceX + tolerance
   ) return "missing";
   return null;
+}
+
+type ReferenceContinuation = { lines: Line[]; endIndex: number };
+
+function isReferenceContinuation(
+  line: Line,
+  previous: Line,
+  parsed: ParsedMeasurement,
+  columns: ResultColumns | null,
+): boolean {
+  const verticalGap = previous.bounds.y - line.bounds.y;
+  const maximumGap = Math.max(previous.bounds.height, line.bounds.height) *
+    2.5;
+  const leftTolerance = Math.max(12, previous.bounds.height * 2);
+  return verticalGap >= 0 && verticalGap <= maximumGap &&
+    line.bounds.x >= parsed.referenceStartX! - leftTolerance &&
+    (columns?.methodX === null || columns?.methodX === undefined ||
+      line.bounds.x < columns.methodX - leftTolerance);
+}
+
+function followingReferenceLines(
+  lines: Line[],
+  index: number,
+  parsed: ParsedMeasurement,
+  columns: ResultColumns | null,
+): ReferenceContinuation {
+  const continuation: Line[] = [];
+  let previous = lines[index];
+  let endIndex = index;
+  for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex++) {
+    const next = lines[nextIndex];
+    if (!isReferenceContinuation(next, previous, parsed, columns)) break;
+    continuation.push(next);
+    previous = next;
+    endIndex = nextIndex;
+  }
+  return { lines: continuation, endIndex };
+}
+
+function precedingReferenceLines(
+  lines: Line[],
+  index: number,
+  parsed: ParsedMeasurement,
+  columns: ResultColumns | null,
+): Line[] {
+  const continuation: Line[] = [];
+  let previous = lines[index];
+  for (let previousIndex = index - 1; previousIndex >= 0; previousIndex--) {
+    const next = lines[previousIndex];
+    const verticalGap = next.bounds.y - previous.bounds.y;
+    const maximumGap = Math.max(next.bounds.height, previous.bounds.height) *
+      2.5;
+    const leftTolerance = Math.max(12, previous.bounds.height * 2);
+    if (
+      verticalGap < 0 || verticalGap > maximumGap ||
+      next.bounds.x < parsed.referenceStartX! - leftTolerance ||
+      (columns?.methodX !== null && columns?.methodX !== undefined &&
+        next.bounds.x >= columns.methodX - leftTolerance)
+    ) break;
+    continuation.push(next);
+    previous = next;
+  }
+  return continuation.reverse();
+}
+
+function isVerticallyMergedReferenceRow(
+  lines: Line[],
+  index: number,
+  columns: ResultColumns | null,
+): boolean {
+  const parsed = parseMeasurement("", 0, lines[index]);
+  return parsed !== null && columnRelation(parsed, columns) === "reference" &&
+    followingReferenceLines(lines, index, parsed, columns).lines.length > 0;
 }
 
 /**
@@ -338,41 +424,44 @@ export function parseMeasurementBlock(
     isolateInlineRange(parsed.candidate, lines[index], columns!);
   }
 
-  const evidence = [...parsed.candidate.referenceEvidence];
-  let previous = lines[index];
-  const leftTolerance = Math.max(12, previous.bounds.height * 2);
-  for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex++) {
-    const next = lines[nextIndex];
-    const verticalGap = previous.bounds.y - next.bounds.y;
-    const maximumGap = Math.max(previous.bounds.height, next.bounds.height) *
-      2.5;
-    if (
-      verticalGap < 0 || verticalGap > maximumGap ||
-      next.bounds.x < parsed.referenceStartX - leftTolerance ||
-      (columns?.methodX !== null && columns?.methodX !== undefined &&
-        next.bounds.x >= columns.methodX - leftTolerance)
-    ) break;
-    evidence.push({ line: next.index + 1, text: next.text });
-    previous = next;
-  }
+  const following = followingReferenceLines(lines, index, parsed, columns);
+  const nextMeasurementIndex = following.endIndex + 1;
+  // A result whose reference-only lines occur both above and below its own
+  // line is vertically centred in a merged reference cell. Those upper lines
+  // visually follow the preceding row, but structurally belong to that result.
+  const followingBelongsToNextMergedRow = following.lines.length > 0 &&
+    nextMeasurementIndex < lines.length &&
+    isVerticallyMergedReferenceRow(lines, nextMeasurementIndex, columns);
+  const forwardLines = followingBelongsToNextMergedRow ? [] : following.lines;
+  const backwardLines = following.lines.length > 0
+    ? precedingReferenceLines(lines, index, parsed, columns)
+    : [];
+  const evidenceLines = [...backwardLines, lines[index], ...forwardLines];
+  const evidence = evidenceLines.map((line) => ({
+    line: line.index + 1,
+    text: line.text,
+  }));
 
   if (evidence.length > 1) {
     parsed.candidate.referenceKind = "table";
     parsed.candidate.referenceEvidence = evidence;
-    parsed.candidate.referenceText = evidence.map((item, evidenceIndex) =>
-      evidenceIndex === 0 && parsed.referenceBeforeUnit
-        ? parsed.candidate.referenceText ?? item.text
-        : evidenceIndex === 0
+    parsed.candidate.referenceText = evidenceLines.map((line) =>
+      line === lines[index]
         ? referenceColumnText(
           lines[index],
           parsed.referenceStartX!,
           columns?.methodX ?? null,
-          parsed.referenceBeforeUnit ? parsed.unitX : null,
-        ) ?? item.text
-        : item.text
+          // A table can place both its unit and category in the reference
+          // cell. Keep the entire cell; the unit field remains separate.
+          null,
+        ) ?? line.text
+        : line.text
     ).join("\n");
   }
-  return { candidate: parsed.candidate, endIndex: index + evidence.length - 1 };
+  return {
+    candidate: parsed.candidate,
+    endIndex: index + forwardLines.length,
+  };
 }
 
 /** Render unconfirmed measurement candidates for a completed local extraction. */
