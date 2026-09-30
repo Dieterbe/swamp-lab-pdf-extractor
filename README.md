@@ -20,6 +20,10 @@ candidates that a person reviews before accepting.
 Candidate labels stay in the source language. This preserves what the PDF says;
 translation is not implemented yet.
 
+Important: swamp model output may not be reliable. Only `reviewed-records.json`
+(manually reviewed through the web UI) records with status "approved"
+should be considered reliable.
+
 ## Limits
 
 The current implementation reads digital PDF text only. OCR for scanned PDFs,
