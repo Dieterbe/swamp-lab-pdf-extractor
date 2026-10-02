@@ -7,6 +7,7 @@
  */
 import { z } from "npm:zod@4";
 import { getDocumentProxy } from "npm:unpdf@0.12.1";
+import { requireAnalyte } from "../catalog/analytes.ts";
 
 const GlobalArgsSchema = z.object({});
 
@@ -45,10 +46,73 @@ const DocumentSchema = z.object({
   extractedAt: z.iso.datetime(),
 });
 
+const ReviewStatusSchema = z.enum([
+  "pending",
+  "approved",
+  "edited",
+  "rejected",
+  "added",
+]);
+const ReviewedRecordSchema = z.object({
+  status: ReviewStatusSchema,
+  page: z.number().int().positive(),
+  sourceLabel: z.string(),
+  sourceSection: z.string().nullable(),
+  valueText: z.string(),
+  unit: z.string().nullable(),
+  referenceText: z.string().nullable(),
+  referenceKind: z.string(),
+  methodText: z.string().nullable(),
+});
+const ReviewedDocumentSchema = z.object({
+  file: z.string().min(1),
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  pageCount: z.number().int().positive(),
+  records: z.array(ReviewedRecordSchema),
+  parsingAssertion: z.literal("complete").optional(),
+});
+const ReviewedLedgerSchema = z.object({
+  schemaVersion: z.literal(1),
+  documents: z.array(ReviewedDocumentSchema),
+});
+const CanonicalRecordSchema = z.object({
+  sourceFile: z.string().min(1),
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  page: z.number().int().positive(),
+  analyteId: z.string().min(1),
+  analyteName: z.string().min(1),
+  analyteShortLabel: z.string().nullable(),
+  analyteAliases: z.array(z.string()),
+  sourceLabel: z.string(),
+  sourceSection: z.string().nullable(),
+  valueText: z.string(),
+  unit: z.string().nullable(),
+  referenceText: z.string().nullable(),
+  referenceKind: z.string(),
+  methodText: z.string().nullable(),
+});
+const CanonicalExportSchema = z.object({
+  status: z.literal("confirmed"),
+  generatedAt: z.iso.datetime(),
+  includedDocuments: z.array(z.object({
+    file: z.string().min(1),
+    sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    pageCount: z.number().int().positive(),
+    recordCount: z.number().int().nonnegative(),
+  })),
+  skippedDocuments: z.array(z.object({
+    file: z.string().min(1),
+    reasons: z.array(z.enum(["not-complete", "not-all-approved"])).min(1),
+  })),
+  records: z.array(CanonicalRecordSchema),
+});
+
 type Bounds = z.infer<typeof BoundsSchema>;
 type Word = z.infer<typeof WordSchema>;
 type Line = z.infer<typeof LineSchema>;
 type Document = z.infer<typeof DocumentSchema>;
+type ReviewedLedger = z.infer<typeof ReviewedLedgerSchema>;
+type CanonicalExport = z.infer<typeof CanonicalExportSchema>;
 
 type TextItemLike = {
   str?: unknown;
@@ -270,6 +334,88 @@ async function writeDocuments(
   return { dataHandles: handles };
 }
 
+/** Build a fail-closed analysis export from fully confirmed review documents. */
+function canonicalExport(
+  ledger: ReviewedLedger,
+  generatedAt = new Date().toISOString(),
+): CanonicalExport {
+  const includedDocuments: CanonicalExport["includedDocuments"] = [];
+  const skippedDocuments: CanonicalExport["skippedDocuments"] = [];
+  const records: CanonicalExport["records"] = [];
+
+  for (const document of ledger.documents) {
+    const reasons: Array<"not-complete" | "not-all-approved"> = [];
+    if (document.parsingAssertion !== "complete") reasons.push("not-complete");
+    if (!document.records.every((record) => record.status === "approved")) {
+      reasons.push("not-all-approved");
+    }
+    if (reasons.length > 0) {
+      skippedDocuments.push({ file: document.file, reasons });
+      continue;
+    }
+
+    includedDocuments.push({
+      file: document.file,
+      sourceSha256: document.sourceSha256,
+      pageCount: document.pageCount,
+      recordCount: document.records.length,
+    });
+    for (const record of document.records) {
+      const analyte = requireAnalyte(
+        record.sourceLabel,
+        null,
+        record.sourceSection,
+      );
+      records.push({
+        sourceFile: document.file,
+        sourceSha256: document.sourceSha256,
+        page: record.page,
+        analyteId: analyte.id,
+        analyteName: analyte.displayName,
+        analyteShortLabel: analyte.shortLabel,
+        analyteAliases: analyte.canonicalAliases,
+        sourceLabel: record.sourceLabel,
+        sourceSection: record.sourceSection,
+        valueText: record.valueText,
+        unit: record.unit,
+        referenceText: record.referenceText,
+        referenceKind: record.referenceKind,
+        methodText: record.methodText,
+      });
+    }
+  }
+  return CanonicalExportSchema.parse({
+    status: "confirmed",
+    generatedAt,
+    includedDocuments,
+    skippedDocuments,
+    records,
+  });
+}
+
+async function exportReviewedLedger(
+  args: { ledgerPath: string; outputPath: string },
+  context: MethodContext,
+): Promise<{ dataHandles: Array<{ name: string }> }> {
+  const ledger = ReviewedLedgerSchema.parse(
+    JSON.parse(await Deno.readTextFile(args.ledgerPath)),
+  );
+  const exported = canonicalExport(ledger);
+  await Deno.writeTextFile(
+    args.outputPath,
+    `${JSON.stringify(exported, null, 2)}\n`,
+  );
+  const handle = await context.writeResource(
+    "canonicalRecordSet",
+    "canonical-records",
+    exported,
+  );
+  context.logger.info("Exported {count} confirmed canonical record(s)", {
+    count: exported.records.length,
+  });
+  return { dataHandles: [handle] };
+}
+
 /** Local, coordinate-aware digital-PDF layout extraction model. */
 export const model = {
   type: "@dieter/lab-pdf-extractor" as const,
@@ -280,6 +426,13 @@ export const model = {
       description:
         "Unconfirmed, coordinate-aware text layout extracted from one digital PDF",
       schema: DocumentSchema,
+      lifetime: "infinite" as const,
+      garbageCollection: 10,
+    },
+    canonicalRecordSet: {
+      description:
+        "Strict canonical analysis records exported from complete review documents",
+      schema: CanonicalExportSchema,
       lifetime: "infinite" as const,
       garbageCollection: 10,
     },
@@ -310,9 +463,27 @@ export const model = {
         context: MethodContext,
       ) => await writeDocuments(await inputPaths(args), context),
     },
+    exportCanonical: {
+      description:
+        "Export complete, approved review documents as strict canonical analysis records",
+      arguments: z.object({
+        ledgerPath: z.string().min(1),
+        outputPath: z.string().min(1),
+      }),
+      execute: async (
+        args: { ledgerPath: string; outputPath: string },
+        context: MethodContext,
+      ) => await exportReviewedLedger(args, context),
+    },
   },
 };
 
 /** Test seams used only by local regression tests. */
 /** Internal extraction helpers exposed solely for local unit and regression tests. */
-export const testables = { extractDocument, groupIntoLines, joinWords, toWord };
+export const testables = {
+  canonicalExport,
+  extractDocument,
+  groupIntoLines,
+  joinWords,
+  toWord,
+};

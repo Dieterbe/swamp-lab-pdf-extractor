@@ -605,6 +605,38 @@ Deno.test("assigns a vertically merged reference cell to its centred result", ()
   ) throw new Error("Expected the merged reference cell to stay with LDL");
 });
 
+Deno.test("keeps a separated reference table with its preceding result", () => {
+  const lines = [
+    line(4, "HDL Cholesterol : 45.0 mg/dl No risk: > 55", 33, 600, [
+      ["HDL Cholesterol", 33],
+      [":", 251],
+      ["45.0", 309],
+      ["mg/dl", 351],
+      ["No risk: > 55", 410],
+    ]),
+    line(5, "Moderate risk: 35 - 55", 410, 589),
+    line(6, "High risk: < 35", 410, 578),
+    line(7, "LDL Cholesterol : 154.4 mg/dl Desirable: < 130", 33, 550, [
+      ["LDL Cholesterol", 33],
+      [":", 251],
+      ["154.4", 303],
+      ["mg/dl", 351],
+      ["Desirable: < 130", 410],
+    ]),
+  ];
+  const columns = { valueX: 309, unitX: 351, referenceX: 410, methodX: null };
+  const hdl = parseMeasurementBlock("example.pdf", 1, lines, 0, columns);
+  if (
+    !hdl || hdl.candidate.referenceKind !== "table" ||
+    hdl.candidate.referenceText !==
+      "No risk: > 55\nModerate risk: 35 - 55\nHigh risk: < 35"
+  ) {
+    throw new Error(
+      "Expected the separated reference table to remain with HDL",
+    );
+  }
+});
+
 Deno.test("appends a continuation aligned after a source code", () => {
   const block = parseMeasurementBlock(
     "example.pdf",

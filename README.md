@@ -20,6 +20,13 @@ candidates that a person reviews before accepting.
 Candidate labels stay in the source language. This preserves what the PDF says;
 translation is not implemented yet.
 
+Candidate reports also include a canonical analyte ID such as
+`blood/glucose` or `urine/glucose`. The specimen prefix prevents values with
+the same printed label from being combined across samples. The source label and
+source section remain alongside that ID as provenance. The private review
+ledger deliberately keeps only those source fields; downstream code resolves
+the canonical ID from the reviewed record using the catalog.
+
 Important: swamp model output may not be reliable. Only `reviewed-records.json`
 (manually reviewed through the web UI) records with status "approved"
 should be considered reliable.
@@ -78,9 +85,28 @@ LAB_PDF_PRIVATE_FIXTURES_DIR=.private \
   extensions/models/lab_pdf_private_regression_test.ts
 ```
 
+Export only fully approved, parsing-complete documents for analysis. Run this
+from the Swamp project directory, not this extension directory:
+
+```sh
+cd /home/dieter/code/personal-health-data-platform
+
+swamp model method run @dieter/lab-pdf-extractor exportCanonical lab-pdf \
+  --input ledgerPath=/home/dieter/code/swamp-lab-pdf-extractor/.private/reviewed-records.json \
+  --input outputPath=/home/dieter/code/swamp-lab-pdf-extractor/.private/canonical-records.json \
+  --skip-reports
+```
+
+The export preserves source provenance and adds the canonical ID, display name,
+preferred short label, and scoped canonical aliases. It fails if an included
+record cannot be mapped unambiguously.
+
 The private directory is ignored rather than anonymized because it is useful
 for a single-user local workflow. Public fixtures would require deliberate
 anonymization before being added.
+
+See [Operations and data contract](OPERATIONS.md) for every health-data
+operation, its inputs and outputs, and current failure behavior.
 
 ## Development
 

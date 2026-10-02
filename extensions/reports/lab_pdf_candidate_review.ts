@@ -853,10 +853,21 @@ export function parseMeasurementBlock(
 
   const following = followingReferenceLines(lines, index, parsed, columns);
   const nextMeasurementIndex = following.endIndex + 1;
+  const lastFollowingLine = following.lines.at(-1);
+  const nextMeasurement = lines[nextMeasurementIndex];
+  const nextMeasurementIsAdjacent = lastFollowingLine !== undefined &&
+    nextMeasurement !== undefined &&
+    lastFollowingLine.bounds.y - nextMeasurement.bounds.y >= 0 &&
+    lastFollowingLine.bounds.y - nextMeasurement.bounds.y <=
+      Math.max(lastFollowingLine.bounds.height, nextMeasurement.bounds.height) *
+        1.75;
   // A result whose reference-only lines occur both above and below its own
   // line is vertically centred in a merged reference cell. Those upper lines
   // visually follow the preceding row, but structurally belong to that result.
+  // This only applies while both the reference rows and centred result form one
+  // contiguous visual block; a larger gap begins the next result row.
   const followingBelongsToNextMergedRow = following.lines.length > 0 &&
+    nextMeasurementIsAdjacent &&
     nextMeasurementIndex < lines.length &&
     isVerticallyMergedReferenceRow(lines, nextMeasurementIndex, columns);
   const forwardLines = followingBelongsToNextMergedRow ? [] : following.lines;
@@ -1022,7 +1033,7 @@ export const report = {
         );
         return `## ${
           escape(sourceFileName)
-        }\n\n| Line | Label | Source section | Value | Unit | Reference | Method | Mapping |\n| ---: | --- | --- | ---: | --- | --- | --- | --- |\n${
+        }\n\n| Line | Label | Source section | Value | Unit | Reference | Method | Canonical analyte |\n| ---: | --- | --- | ---: | --- | --- | --- | --- |\n${
           tableRows.replaceAll(`| ${escape(sourceFileName)} | `, "|")
         }`;
       }).join("\n\n");

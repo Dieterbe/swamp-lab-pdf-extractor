@@ -2,6 +2,7 @@ import {
   type Candidate,
   extractMeasurementCandidates,
 } from "../reports/lab_pdf_candidate_review.ts";
+import { requireAnalyte } from "../catalog/analytes.ts";
 import { testables } from "./lab_pdf_extractor.ts";
 
 type ExpectedCandidate =
@@ -104,6 +105,7 @@ Deno.test({
           record.status === "added"
         )
       ) {
+        requireAnalyte(required.sourceLabel, null, required.sourceSection);
         if (!actual.some((candidate) => matches(candidate, required))) {
           throw new Error(
             "A validated private record no longer matches extraction.",
