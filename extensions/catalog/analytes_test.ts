@@ -96,8 +96,18 @@ Deno.test("recognizes reviewed broad blood headings and never falls back across 
       "Expected Greek urine heading to identify a urine specimen",
     );
   }
+  if (specimenFromSourceSection("Κούραση") !== null) {
+    throw new Error(
+      "Expected a word merely containing the Greek urine fragment to stay unknown",
+    );
+  }
   if (specimenFromSourceSection("blood and urine") !== null) {
     throw new Error("Expected a mixed specimen heading to remain unknown");
+  }
+  if (specimenFromSourceSection("ΑΙΜΑΤΟΣ & ΟΥΡΩΝ") !== null) {
+    throw new Error(
+      "Expected a mixed Greek specimen heading to remain unknown",
+    );
   }
   if (findAnalyte("Creatinine", null, "ΓΕΝΙΚΗ ΕΞΕΤΑΣΗ ΟΥΡΩΝ") !== null) {
     throw new Error(
