@@ -2,6 +2,7 @@ import {
   findAnalyte,
   normaliseAnalyteLabel,
   requireAnalyte,
+  specimenFromSourceSection,
 } from "./analytes.ts";
 
 Deno.test("maps reviewed Greek and English source labels to stable identities", () => {
@@ -73,6 +74,39 @@ Deno.test("uses section specimen context for otherwise ambiguous labels", () => 
     findAnalyte("Αιμοσφαιρίνη", null, "ΓΕΝΙΚΗ ΕΞΕΤΑΣΗ ΑΙΜΑΤΟΣ")?.id !==
       "blood/hemoglobin"
   ) throw new Error("Expected blood context to select blood hemoglobin");
+});
+
+Deno.test("recognizes reviewed broad blood headings and never falls back across specimens", () => {
+  for (
+    const heading of [
+      "ΒΙΟΧΗΜΙΚΟΣ ΕΛΕΓΧΟΣ",
+      "ΕΛΕΓΧΟΣ ΟΡΜΟΝΩΝ",
+      "IMMUNOLOGY",
+      "RED BLOOD CELLS",
+      "White Cell Differentials",
+      "PLATELETS",
+    ]
+  ) {
+    if (specimenFromSourceSection(heading) !== "blood") {
+      throw new Error(`Expected ${heading} to identify a blood specimen`);
+    }
+  }
+  if (specimenFromSourceSection("ΓΕΝΙΚΗ ΕΞΕΤΑΣΗ ΟΥΡΩΝ") !== "urine") {
+    throw new Error(
+      "Expected Greek urine heading to identify a urine specimen",
+    );
+  }
+  if (specimenFromSourceSection("blood and urine") !== null) {
+    throw new Error("Expected a mixed specimen heading to remain unknown");
+  }
+  if (findAnalyte("Creatinine", null, "ΓΕΝΙΚΗ ΕΞΕΤΑΣΗ ΟΥΡΩΝ") !== null) {
+    throw new Error(
+      "Expected urine creatinine not to fall back to blood creatinine",
+    );
+  }
+  if (findAnalyte("pH", null, "ΒΙΟΧΗΜΙΚΟΣ ΕΛΕΓΧΟΣ") !== null) {
+    throw new Error("Expected blood pH not to fall back to urine pH");
+  }
 });
 
 Deno.test("fails closed when canonical output encounters an unknown label", () => {

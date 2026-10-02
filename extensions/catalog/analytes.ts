@@ -25,16 +25,46 @@ export function normaliseAnalyteLabel(value: string): string {
   ).replace(/[^\p{L}\p{N}#%]+/gu, " ").trim();
 }
 
+/**
+ * Reviewed report headings that establish a blood specimen even when they do
+ * not literally say "blood". Keep this list limited to headings observed in
+ * the approved corpus; an unfamiliar heading must not guess a specimen.
+ */
+const bloodSectionPhrases = [
+  "βιοχημικος ελεγχος",
+  "ελεγχος ορμονων",
+  "οστικοι δεικτες",
+  "ελεγχος πρωτεινων",
+  "ελεγχος αναιμιας",
+  "ειδικες πρωτεινες",
+  "αιματολογικος ελεγχος",
+  "ελεγχος θυροειδους",
+  "δεικτες ca",
+  "white blood cells",
+  "white cell differentials",
+  "red blood cells",
+  "platelets",
+  "hdl panel",
+  "immunology",
+  "endocrinology",
+];
+
 /** Infer only the broad specimen class needed to resolve ambiguous labels. */
 export function specimenFromSourceSection(
   sourceSection: string | null,
 ): Specimen | null {
   const section = normaliseAnalyteLabel(sourceSection ?? "");
-  if (/\burine\b|ουρων|ουρα/iu.test(section)) return "urine";
-  if (/\bblood\b|αιματος|αιμα|hemat|haemat|serum|plasma/iu.test(section)) {
-    return "blood";
-  }
-  return null;
+  const tokens = new Set(section.split(" ").filter(Boolean));
+  const isUrine = tokens.has("urine") || tokens.has("ουρων") ||
+    tokens.has("ουρα");
+  const isBlood = tokens.has("blood") || tokens.has("αιματος") ||
+    tokens.has("αιμα") || tokens.has("serum") || tokens.has("plasma") ||
+    bloodSectionPhrases.some((phrase) => section.includes(phrase));
+
+  // A combined or contradictory heading is not sufficiently specific to
+  // disambiguate a source label. Do not give either signal precedence.
+  if (isUrine === isBlood) return null;
+  return isUrine ? "urine" : "blood";
 }
 
 /** Look up a reviewed source label without translating or inferring a result. */
@@ -44,20 +74,19 @@ export function findAnalyte(
   sourceSection: string | null = null,
 ): Analyte | null {
   const label = normaliseAnalyteLabel(sourceLabel);
+  const specimen = specimenFromSourceSection(sourceSection);
   const matches = analytes.filter((
     entry,
   ) => ((sourceCode !== null && entry.sourceCodes.includes(sourceCode)) ||
     entry.sourceAliases.some((alias) => normaliseAnalyteLabel(alias) === label))
   ).filter((entry) =>
     entry.requiredSpecimen === undefined ||
-    entry.requiredSpecimen === specimenFromSourceSection(sourceSection)
+    entry.requiredSpecimen === specimen
   );
-  const specimen = specimenFromSourceSection(sourceSection);
-  const contextual = specimen === null
-    ? []
+  const scopedMatches = specimen === null
+    ? matches
     : matches.filter((entry) => entry.id.startsWith(`${specimen}/`));
-  if (contextual.length === 1) return contextual[0];
-  return matches.length === 1 ? matches[0] : null;
+  return scopedMatches.length === 1 ? scopedMatches[0] : null;
 }
 
 /** Resolve a reviewed record for canonical output, failing closed if unknown. */
