@@ -433,7 +433,10 @@ export const analytes: Analyte[] = [
   analyte("urine-ketones", "Urine ketones", ["Κετόνες"]),
   analyte("urine-leukocytes", "Urine leukocytes", ["Πυοσφαίρια"]),
   analyte("urine-mucus", "Urine mucus", ["Βλέννη"]),
-  analyte("urine-nitrite", "Urine nitrite", ["Νιτρικά"]),
+  // The reviewed urine dipstick reports print "Νιτρικά" (literally
+  // “nitrates”) for the nitrite indicator; accept the conventional Greek
+  // label too while retaining the printed label in source provenance.
+  analyte("urine-nitrite", "Urine nitrite", ["Νιτρικά", "Νιτρώδη"]),
   analyte("urine-ph", "Urine pH", ["pH"]),
   analyte("urine-protein", "Urine protein", ["Λέυκωμα"]),
   analyte("urine-red-blood-cells", "Urine red blood cells", [

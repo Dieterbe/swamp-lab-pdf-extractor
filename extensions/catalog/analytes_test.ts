@@ -65,6 +65,15 @@ Deno.test("requires source context for context-dependent aliases", () => {
   ) throw new Error("Expected urine section to map sugar to urine glucose");
 });
 
+Deno.test("maps the reviewed Greek urine nitrite terminology", () => {
+  for (const label of ["Νιτρικά", "Νιτρώδη"]) {
+    if (
+      findAnalyte(label, null, "ΓΕΝΙΚΗ ΕΞΕΤΑΣΗ ΟΥΡΩΝ")?.id !==
+        "urine/nitrite"
+    ) throw new Error(`Expected ${label} to map to urine nitrite`);
+  }
+});
+
 Deno.test("uses section specimen context for otherwise ambiguous labels", () => {
   if (
     findAnalyte("Αιμοσφαιρίνη", null, "ΓΕΝΙΚΗ ΕΞΕΤΑΣΗ ΟΥΡΩΝ")?.id !==

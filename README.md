@@ -27,6 +27,12 @@ source section remain alongside that ID as provenance. The private review
 ledger deliberately keeps only those source fields; downstream code resolves
 the canonical ID from the reviewed record using the catalog.
 
+### Greek urine nitrite label
+
+When a lab uses `Νιτρικά`, literally “nitrates”, our catalog maps it to `urine/nitrite`, because
+they probably meant nitrite (`Νιτρώδη`).  The original printed label remains in every source
+record, and `Νιτρώδη` is accepted as the conventional Greek spelling for future reports.
+
 Important: swamp model output may not be reliable. Only `reviewed-records.json`
 (manually reviewed through the web UI) records with status "approved"
 should be considered reliable.
