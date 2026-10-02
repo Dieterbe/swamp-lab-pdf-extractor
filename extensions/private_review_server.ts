@@ -13,12 +13,19 @@ type Row = {
   referenceKind: string;
   methodText: string | null;
   matchesLedger?: boolean;
+  assertionViolation?: "unexpected" | "missing";
+};
+type DocumentEntry = {
+  file: string;
+  sourceSha256: string;
+  pageCount: number;
+  records: Row[];
+  parsingAssertion?: "complete";
+  assertionChanges?: { unexpected: number; missing: number };
 };
 type Ledger = {
   schemaVersion: 1;
-  documents: Array<
-    { file: string; sourceSha256: string; pageCount: number; records: Row[] }
-  >;
+  documents: DocumentEntry[];
 };
 const root = Deno.env.get("LAB_PDF_PRIVATE_FIXTURES_DIR");
 if (!root) {
@@ -90,6 +97,32 @@ function sameRecord(left: Row, right: Row): boolean {
     left.methodText === right.methodText;
 }
 
+function isConfirmedRecord(record: Row): boolean {
+  return record.status === "approved" || record.status === "edited" ||
+    record.status === "added";
+}
+
+/** An asserted document never silently loses a manually confirmed record. */
+function retainAssertedRecords(next: Ledger, saved: Ledger): Ledger {
+  for (const savedDocument of saved.documents) {
+    if (savedDocument.parsingAssertion !== "complete") continue;
+    const nextDocument = next.documents.find((document) =>
+      document.file === savedDocument.file
+    );
+    if (!nextDocument) continue;
+    nextDocument.parsingAssertion = "complete";
+    for (const expected of savedDocument.records) {
+      if (
+        isConfirmedRecord(expected) &&
+        !nextDocument.records.some((record) => sameRecord(record, expected))
+      ) {
+        nextDocument.records.push({ ...expected });
+      }
+    }
+  }
+  return next;
+}
+
 /** Re-extract local PDFs and apply decisions only to matching candidates. */
 async function freshLedger(): Promise<Ledger> {
   const latest = await draft();
@@ -109,6 +142,29 @@ async function freshLedger(): Promise<Ledger> {
       record.matchesLedger = matchingRecord !== undefined;
       if (matchingRecord) record.status = matchingRecord.status;
     }
+    if (previous.parsingAssertion !== "complete") continue;
+
+    document.parsingAssertion = "complete";
+    const unexpected = document.records.filter((record) =>
+      record.matchesLedger !== true
+    );
+    for (const record of unexpected) record.assertionViolation = "unexpected";
+
+    const missing = previous.records.filter((expected) =>
+      isConfirmedRecord(expected) &&
+      !document.records.some((actual) => sameRecord(actual, expected))
+    );
+    for (const record of missing) {
+      document.records.push({
+        ...record,
+        matchesLedger: false,
+        assertionViolation: "missing",
+      });
+    }
+    document.assertionChanges = {
+      unexpected: unexpected.length,
+      missing: missing.length,
+    };
   }
   return latest;
 }
@@ -139,6 +195,7 @@ const page = `<!doctype html>
   td,th{border-bottom:1px solid var(--line);padding:6px 8px;vertical-align:top;text-align:left;overflow-wrap:anywhere}
   th{color:var(--muted);font-weight:400;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
   tr:last-child td{border-bottom:0} tr[data-state="approved"] select{color:var(--green)} tr[data-state="pending"] select{color:var(--yellow)} tr[data-state="rejected"] select{color:var(--red)}
+  tr[data-assertion-violation] td:first-child{box-shadow:inset 3px 0 var(--red)} tr[data-assertion-violation="missing"] td{color:var(--red)}
   th:nth-child(1),td:nth-child(1){width:8rem} th:nth-child(2),td:nth-child(2){width:3.5rem} th:nth-child(3),td:nth-child(3){width:28%;min-width:17rem} th:nth-child(4),td:nth-child(4){width:21%;min-width:14rem} th:nth-child(5),td:nth-child(5){width:5rem} th:nth-child(6),td:nth-child(6){width:5rem} th:nth-child(8),td:nth-child(8){width:7rem}
   .actions{display:flex;gap:10px}
   .save-notice{color:var(--green);font-size:11px;letter-spacing:.06em;opacity:0;text-transform:uppercase;transition:opacity .2s ease;white-space:nowrap}
@@ -153,11 +210,12 @@ const page = `<!doctype html>
   .document-choice.approved{border-left-color:var(--green)}.document-choice.approved .document-file{color:var(--green)}.document-choice.warning{border-left-color:var(--yellow)}.document-choice.warning .document-file{color:var(--yellow)}.document-choice.critical{border-left-color:var(--red)}.document-choice.critical .document-file{color:var(--red)}.document-choice.selected{background:var(--surface-active)}
   .current-file{display:grid;gap:3px;margin-top:9px;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
   .current-file input{color:var(--cyan);cursor:text;letter-spacing:0;text-transform:none}
+  .assertion-note{margin:0 0 16px;color:var(--muted);font-size:12px;letter-spacing:.03em}.assertion-note.complete{color:var(--green)}.assertion-note.failed{color:var(--red)}
   .loading{color:var(--yellow);letter-spacing:.05em;text-transform:uppercase}
   @media(max-width:950px){.shell{padding:28px 20px}header{margin:-16px 0 22px}.header-content{gap:14px}.document-picker{width:64vw}.actions{flex-wrap:wrap}.document-trigger,.document-choice{grid-template-columns:minmax(0,1fr)}}
 </style>
 <div class="shell">
-  <header><div class="header-content"><div><h1>Lab PDF review</h1><p class="description">Edit candidate rows, choose their decision, or add records.<br>Saving writes only <code>reviewed-records.json</code>.</p><div class="document-picker"><button id="document-trigger" class="document-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" onclick="toggleDocumentMenu()"></button><div id="document-menu" class="document-menu" role="listbox" hidden></div></div><label class="current-file"><span>Selected filename — click to select</span><input id="current-file" readonly onclick="this.select()"></label></div><div class="actions"><span id="save-notice" class="save-notice" role="status" aria-live="polite"></span><button onclick="save()">Save</button></div></div></header>
+  <header><div class="header-content"><div><h1>Lab PDF review</h1><p class="description">Edit candidate rows, choose their decision, or add records.<br>Saving writes only <code>reviewed-records.json</code>.</p><div class="document-picker"><button id="document-trigger" class="document-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" onclick="toggleDocumentMenu()"></button><div id="document-menu" class="document-menu" role="listbox" hidden></div></div><label class="current-file"><span>Selected filename — click to select</span><input id="current-file" readonly onclick="this.select()"></label></div><div class="actions"><span id="save-notice" class="save-notice" role="status" aria-live="polite"></span><button id="assert-complete" type="button" onclick="assertComplete()">Assert parsing complete</button><button onclick="save()">Save</button></div></div></header>
   <main aria-busy="true"><p class="loading">Extracting PDFs…</p></main>
 </div>
 <script>
@@ -171,10 +229,10 @@ const page = `<!doctype html>
   function sameVisibleRecord(left,right){return cols.every(c=>c==='unit'?(left[c]||null)===(right[c]||null):(left[c]??null)===(right[c]??null))}
   function markUnsaved(t){let row=t.closest('tr[data-d]');if(!row)return;captureVisibleRows();let r=d.documents[row.dataset.d].records[row.dataset.r],original=baseline.documents[row.dataset.d]?.records[row.dataset.r];r.matchesLedger=original?.matchesLedger===true&&sameVisibleRecord(r,original);row.dataset.ledgerChange=String(r.matchesLedger===false)}
   function render(){document.querySelector('main').innerHTML=d.documents.map((x,i)=>'<h2>'+displayFile(x.file)+'</h2><table><tr>'+columns.map(([,label])=>'<th>'+label+'</th>').join('')+'</tr>'+x.records.map((r,j)=>'<tr data-d='+i+' data-r='+j+' data-state="'+r.status+'" data-ledger-change="'+(r.matchesLedger===false)+'">'+cols.map(c=>'<td>'+field(r[c],c,r)+'</td>').join('')+'</tr>').join('')+'</table><button onclick="add('+i+')">Add row</button>').join('')}
-  function add(i){captureVisibleRows();d.documents[i].records.push({status:'added',page:1,sourceLabel:'',sourceSection:null,valueText:'',unit:'',referenceText:null,referenceKind:'missing',methodText:null,matchesLedger:false});render()}
+  function add(i){captureVisibleRows();let document=d.documents[i],record={status:'added',page:1,sourceLabel:'',sourceSection:null,valueText:'',unit:'',referenceText:null,referenceKind:'missing',methodText:null,matchesLedger:false};if(document.parsingAssertion==='complete'){record.assertionViolation='unexpected';document.assertionChanges={unexpected:(document.assertionChanges?.unexpected||0)+1,missing:document.assertionChanges?.missing||0}}document.records.push(record);render()}
   let saveNoticeTimer;
-  function showSaved(){let notice=document.querySelector('#save-notice');notice.textContent='Saved';notice.classList.add('visible');clearTimeout(saveNoticeTimer);saveNoticeTimer=setTimeout(()=>notice.classList.remove('visible'),2200)}
-  async function save(){captureVisibleRows();await fetch('/api/ledger',{method:'PUT',body:JSON.stringify(d)});d.documents.forEach(x=>x.records.forEach(r=>r.matchesLedger=true));baseline=structuredClone(d);render();showSaved()}
+  function showSaved(message='Saved'){let notice=document.querySelector('#save-notice');notice.textContent=message;notice.classList.add('visible');clearTimeout(saveNoticeTimer);saveNoticeTimer=setTimeout(()=>notice.classList.remove('visible'),2200)}
+  async function save(message='Saved'){captureVisibleRows();await fetch('/api/ledger',{method:'PUT',body:JSON.stringify(d)});d.documents.forEach(x=>x.records.forEach(r=>r.matchesLedger=true));baseline=structuredClone(d);render();showSaved(message)}
   init()
 </script>`;
 Deno.serve(async (request) => {
@@ -183,11 +241,14 @@ Deno.serve(async (request) => {
     return Response.json(await freshLedger());
   }
   if (url.pathname === "/api/ledger" && request.method === "PUT") {
-    const ledger = normalizeLedger(
-      JSON.parse(await request.text()) as Ledger,
+    const ledger = retainAssertedRecords(
+      normalizeLedger(JSON.parse(await request.text()) as Ledger),
+      await load(),
     );
     for (const document of ledger.documents) {
+      delete document.assertionChanges;
       for (const record of document.records) delete record.matchesLedger;
+      for (const record of document.records) delete record.assertionViolation;
     }
     await Deno.writeTextFile(
       ledgerPath,
@@ -200,10 +261,14 @@ Deno.serve(async (request) => {
     let states=['pending','approved','edited','rejected','added'];
     function choose(i){captureVisibleRows();currentDocument=i;documentMenuOpen=false;render()}
     function toggleDocumentMenu(){documentMenuOpen=!documentMenuOpen;renderDocumentPicker()}
-    function counts(x){return states.map(s=>[s,x.records.filter(r=>r.status===s).length]).filter(([,count])=>count>0).map(([state,count])=>state+': '+count).join(' · ')||'no candidates'}
-    function health(x){let count=s=>x.records.filter(r=>r.status===s).length;if(count('rejected'))return 'critical';if(!x.records.length||count('pending')||count('added')||count('edited'))return 'warning';return 'approved'}
-    function renderDocumentPicker(){let x=d.documents[currentDocument],trigger=document.querySelector('#document-trigger'),menu=document.querySelector('#document-menu');setCurrentFile(x.file);trigger.dataset.health=health(x);trigger.setAttribute('aria-expanded',String(documentMenuOpen));trigger.innerHTML='<span><span class="document-trigger-label">Document</span><br><span class="document-trigger-file" title="'+displayFile(x.file)+'">'+displayFile(x.file)+'</span></span><span class="document-trigger-counts">'+esc(counts(x))+'</span>';menu.hidden=!documentMenuOpen;menu.innerHTML=d.documents.map((item,i)=>'<button role="option" aria-selected="'+(i===currentDocument)+'" class="document-choice '+health(item)+' '+(i===currentDocument?'selected':'')+'" onclick="choose('+i+')"><span class="document-file" title="'+displayFile(item.file)+'">'+displayFile(item.file)+'</span><span class="document-counts">'+esc(counts(item))+'</span></button>').join('')}
-    render=()=>{let x=d.documents[currentDocument];renderDocumentPicker();document.querySelector('main').innerHTML='<section class="review-document"><table><tr>'+columns.map(([,label])=>'<th>'+label+'</th>').join('')+'</tr>'+x.records.map((r,j)=>'<tr data-d='+currentDocument+' data-r='+j+' data-state="'+r.status+'" data-ledger-change="'+(r.matchesLedger===false)+'" oninput="markUnsaved(this)" onchange="markUnsaved(this)">'+cols.map(c=>'<td>'+field(r[c],c,r)+'</td>').join('')+'</tr>').join('')+'</table><button onclick="add('+currentDocument+')">Add row</button></section>'}
+    function assertionTotal(x){return (x.assertionChanges?.unexpected||0)+(x.assertionChanges?.missing||0)}
+    function assertionText(x){let changes=x.assertionChanges;if(assertionTotal(x))return 'assertion failed: '+(changes.unexpected?'+'+changes.unexpected+' unexpected':'')+(changes.unexpected&&changes.missing?' · ':'')+(changes.missing?'-'+changes.missing+' missing':'');return x.parsingAssertion==='complete'?'parsing complete':''}
+    function counts(x){let recordCounts=states.map(s=>[s,x.records.filter(r=>r.status===s).length]).filter(([,count])=>count>0).map(([state,count])=>state+': '+count).join(' · ')||'no candidates',assertion=assertionText(x);return assertion?recordCounts+' · '+assertion:recordCounts}
+    function health(x){let count=s=>x.records.filter(r=>r.status===s).length;if(assertionTotal(x)||count('rejected'))return 'critical';if(x.parsingAssertion==='complete'&&x.records.every(r=>r.status==='approved'))return 'approved';return 'warning'}
+    function renderAssertionAction(x){let button=document.querySelector('#assert-complete'),hasPending=x.records.some(r=>r.status==='pending'),hasViolations=assertionTotal(x)>0;button.disabled=x.parsingAssertion==='complete'||hasPending||hasViolations;button.textContent=x.parsingAssertion==='complete'?'Parsing complete':'Assert parsing complete';button.title=hasPending?'Resolve all pending rows before asserting parsing complete':hasViolations?'Resolve assertion changes before asserting parsing complete':'Lock the currently reviewed parsing result as complete'}
+    function renderDocumentPicker(){let x=d.documents[currentDocument],trigger=document.querySelector('#document-trigger'),menu=document.querySelector('#document-menu');setCurrentFile(x.file);renderAssertionAction(x);trigger.dataset.health=health(x);trigger.setAttribute('aria-expanded',String(documentMenuOpen));trigger.innerHTML='<span><span class="document-trigger-label">Document</span><br><span class="document-trigger-file" title="'+displayFile(x.file)+'">'+displayFile(x.file)+'</span></span><span class="document-trigger-counts">'+esc(counts(x))+'</span>';menu.hidden=!documentMenuOpen;menu.innerHTML=d.documents.map((item,i)=>'<button role="option" aria-selected="'+(i===currentDocument)+'" class="document-choice '+health(item)+' '+(i===currentDocument?'selected':'')+'" onclick="choose('+i+')"><span class="document-file" title="'+displayFile(item.file)+'">'+displayFile(item.file)+'</span><span class="document-counts">'+esc(counts(item))+'</span></button>').join('')}
+    function assertComplete(){captureVisibleRows();let x=d.documents[currentDocument];if(x.records.some(r=>r.status==='pending')||assertionTotal(x))return;x.parsingAssertion='complete';x.assertionChanges={unexpected:0,missing:0};save('Parsing assertion saved')}
+    render=()=>{let x=d.documents[currentDocument],assertion=assertionText(x),note=assertion?'<p class="assertion-note '+(assertionTotal(x)?'failed':'complete')+'">'+esc(assertion)+(assertionTotal(x)?'. Re-extraction differs from the asserted result.':'')+'</p>':'';renderDocumentPicker();document.querySelector('main').innerHTML='<section class="review-document">'+note+'<table><tr>'+columns.map(([,label])=>'<th>'+label+'</th>').join('')+'</tr>'+x.records.map((r,j)=>'<tr data-d='+currentDocument+' data-r='+j+' data-state="'+r.status+'" data-ledger-change="'+(r.matchesLedger===false)+'" '+(r.assertionViolation?'data-assertion-violation="'+r.assertionViolation+'" title="Parser assertion: '+r.assertionViolation+' record"':'')+' oninput="markUnsaved(this)" onchange="markUnsaved(this)">'+cols.map(c=>'<td>'+field(r[c],c,r)+'</td>').join('')+'</tr>').join('')+'</table><button onclick="add('+currentDocument+')">Add row</button></section>'}
   </script>`;
   return new Response(page + documentPickerView, {
     headers: { "content-type": "text/html; charset=utf-8" },
