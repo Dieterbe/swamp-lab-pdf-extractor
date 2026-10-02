@@ -57,13 +57,10 @@ function candidates(
 }
 
 function matches(candidate: Candidate, expected: ExpectedCandidate): boolean {
-  const sourceSectionMatches = expected.sourceSection === undefined ||
-    candidate.sourceSection === expected.sourceSection ||
-    (candidate.sourceSection !== null && expected.sourceSection !== null &&
-      candidate.sourceSection.endsWith(` / ${expected.sourceSection}`));
   return candidate.page === expected.page &&
     candidate.sourceLabel === expected.sourceLabel &&
-    sourceSectionMatches &&
+    (expected.sourceSection === undefined ||
+      candidate.sourceSection === expected.sourceSection) &&
     candidate.valueText === expected.valueText &&
     (candidate.unit || null) === (expected.unit || null) &&
     candidate.referenceText === expected.referenceText &&

@@ -28,6 +28,19 @@ if (!root) {
 }
 const ledgerPath = `${root}/reviewed-records.json`;
 
+function normalizeUnit(unit: string | null): string | null {
+  return unit?.trim() === "" ? null : unit;
+}
+
+function normalizeLedger(ledger: Ledger): Ledger {
+  for (const document of ledger.documents) {
+    for (const record of document.records) {
+      record.unit = normalizeUnit(record.unit);
+    }
+  }
+  return ledger;
+}
+
 async function draft(): Promise<Ledger> {
   const documents: Ledger["documents"] = [];
   for await (const entry of Deno.readDir(`${root}/fixtures`)) {
@@ -43,7 +56,7 @@ async function draft(): Promise<Ledger> {
       sourceLabel: candidate.sourceLabel,
       sourceSection: candidate.sourceSection,
       valueText: candidate.valueText,
-      unit: candidate.unit,
+      unit: normalizeUnit(candidate.unit),
       referenceText: candidate.referenceText,
       referenceKind: candidate.referenceKind,
       methodText: candidate.methodText,
@@ -60,25 +73,21 @@ async function draft(): Promise<Ledger> {
 async function load(): Promise<Ledger> {
   try {
     const existing = JSON.parse(await Deno.readTextFile(ledgerPath)) as Ledger;
-    return existing.documents.length ? existing : await draft();
+    return existing.documents.length
+      ? normalizeLedger(existing)
+      : await draft();
   } catch {
     return await draft();
   }
 }
 function sameRecord(left: Row, right: Row): boolean {
   return left.page === right.page && left.sourceLabel === right.sourceLabel &&
+    (left.sourceSection ?? null) === (right.sourceSection ?? null) &&
     left.valueText === right.valueText &&
     (left.unit || null) === (right.unit || null) &&
     left.referenceText === right.referenceText &&
     left.referenceKind === right.referenceKind &&
     left.methodText === right.methodText;
-}
-function sameSourceSection(
-  actual: string | null,
-  saved: string | null,
-): boolean {
-  return actual === saved ||
-    (actual !== null && saved !== null && actual.endsWith(` / ${saved}`));
 }
 
 /** Re-extract local PDFs and apply decisions only to matching candidates. */
@@ -97,11 +106,7 @@ async function freshLedger(): Promise<Ledger> {
       const matchingRecord = previous.records.find((item) =>
         sameRecord(item, record)
       );
-      record.matchesLedger = matchingRecord !== undefined &&
-        sameSourceSection(
-          record.sourceSection ?? null,
-          matchingRecord.sourceSection ?? null,
-        );
+      record.matchesLedger = matchingRecord !== undefined;
       if (matchingRecord) record.status = matchingRecord.status;
     }
   }
@@ -134,7 +139,7 @@ const page = `<!doctype html>
   td,th{border-bottom:1px solid var(--line);padding:6px 8px;vertical-align:top;text-align:left;overflow-wrap:anywhere}
   th{color:var(--muted);font-weight:400;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
   tr:last-child td{border-bottom:0} tr[data-state="approved"] select{color:var(--green)} tr[data-state="pending"] select{color:var(--yellow)} tr[data-state="rejected"] select{color:var(--red)}
-  th:nth-child(1),td:nth-child(1){width:8rem} th:nth-child(2),td:nth-child(2){width:3.5rem} th:nth-child(3),td:nth-child(3){width:21%;min-width:14rem} th:nth-child(4),td:nth-child(4){width:28%;min-width:17rem} th:nth-child(5),td:nth-child(5){width:5rem} th:nth-child(6),td:nth-child(6){width:5rem} th:nth-child(8),td:nth-child(8){width:7rem}
+  th:nth-child(1),td:nth-child(1){width:8rem} th:nth-child(2),td:nth-child(2){width:3.5rem} th:nth-child(3),td:nth-child(3){width:28%;min-width:17rem} th:nth-child(4),td:nth-child(4){width:21%;min-width:14rem} th:nth-child(5),td:nth-child(5){width:5rem} th:nth-child(6),td:nth-child(6){width:5rem} th:nth-child(8),td:nth-child(8){width:7rem}
   .actions{display:flex;gap:10px}
   .save-notice{color:var(--green);font-size:11px;letter-spacing:.06em;opacity:0;text-transform:uppercase;transition:opacity .2s ease;white-space:nowrap}
   .save-notice.visible{opacity:1}
@@ -146,17 +151,20 @@ const page = `<!doctype html>
   .document-choice{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;width:100%;border:0;border-left:3px solid transparent;padding:9px 10px;text-align:left}
   .document-choice:hover,.document-choice:focus-visible{background:var(--surface-active);outline:0}.document-file{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.document-counts{color:var(--muted);font-size:11px;white-space:nowrap}
   .document-choice.approved{border-left-color:var(--green)}.document-choice.approved .document-file{color:var(--green)}.document-choice.warning{border-left-color:var(--yellow)}.document-choice.warning .document-file{color:var(--yellow)}.document-choice.critical{border-left-color:var(--red)}.document-choice.critical .document-file{color:var(--red)}.document-choice.selected{background:var(--surface-active)}
+  .current-file{display:grid;gap:3px;margin-top:9px;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  .current-file input{color:var(--cyan);cursor:text;letter-spacing:0;text-transform:none}
   .loading{color:var(--yellow);letter-spacing:.05em;text-transform:uppercase}
   @media(max-width:950px){.shell{padding:28px 20px}header{margin:-16px 0 22px}.header-content{gap:14px}.document-picker{width:64vw}.actions{flex-wrap:wrap}.document-trigger,.document-choice{grid-template-columns:minmax(0,1fr)}}
 </style>
 <div class="shell">
-  <header><div class="header-content"><div><h1>Lab PDF review</h1><p class="description">Edit candidate rows, choose their decision, or add records.<br>Saving writes only <code>reviewed-records.json</code>.</p><div class="document-picker"><button id="document-trigger" class="document-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" onclick="toggleDocumentMenu()"></button><div id="document-menu" class="document-menu" role="listbox" hidden></div></div></div><div class="actions"><span id="save-notice" class="save-notice" role="status" aria-live="polite"></span><button onclick="save()">Save</button></div></div></header>
+  <header><div class="header-content"><div><h1>Lab PDF review</h1><p class="description">Edit candidate rows, choose their decision, or add records.<br>Saving writes only <code>reviewed-records.json</code>.</p><div class="document-picker"><button id="document-trigger" class="document-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" onclick="toggleDocumentMenu()"></button><div id="document-menu" class="document-menu" role="listbox" hidden></div></div><label class="current-file"><span>Selected filename — click to select</span><input id="current-file" readonly onclick="this.select()"></label></div><div class="actions"><span id="save-notice" class="save-notice" role="status" aria-live="polite"></span><button onclick="save()">Save</button></div></div></header>
   <main aria-busy="true"><p class="loading">Extracting PDFs…</p></main>
 </div>
 <script>
-  let d,baseline,columns=[['status','Review'],['page','Page'],['sourceLabel','Analyte'],['sourceSection','Source section'],['valueText','Value'],['unit','Unit'],['referenceText','Reference'],['referenceKind','Reference type'],['methodText','Method']],cols=columns.map(([key])=>key);
+  let d,baseline,columns=[['status','Review'],['page','Page'],['sourceSection','Section'],['sourceLabel','Analyte'],['valueText','Value'],['unit','Unit'],['referenceText','Reference'],['referenceKind','Reference type'],['methodText','Method']],cols=columns.map(([key])=>key);
   let esc=x=>String(x??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
   let displayFile=file=>esc(String(file??'').replace(/^fixtures\\//u,''));
+  let setCurrentFile=file=>document.querySelector('#current-file').value=String(file??'').replace(/^fixtures\\//u,'');
   async function init(){d=await (await fetch('/api/ledger')).json();baseline=structuredClone(d);document.querySelector('main').setAttribute('aria-busy','false');render()}
   function field(v,c,r){if(c==='status')return '<select class="status-control">'+['pending','approved','edited','rejected','added'].map(x=>'<option '+(x==v?'selected':'')+'>'+x+'</option>').join('')+'</select>';if(c==='referenceText'&&(r.referenceKind==='table'||String(v??'').includes('\\n'))){let rows=Math.min(8,Math.max(3,String(v??'').split('\\n').length));return '<textarea class="table-reference" rows="'+rows+'">'+esc(v)+'</textarea>'}return '<input value="'+esc(v)+'">'}
   function captureVisibleRows(){document.querySelectorAll('tr[data-d]').forEach(t=>{let r=d.documents[t.dataset.d].records[t.dataset.r];[...t.querySelectorAll('input,select,textarea')].forEach((e,i)=>r[cols[i]]=e.value||null);r.page=Number(r.page)})}
@@ -175,7 +183,9 @@ Deno.serve(async (request) => {
     return Response.json(await freshLedger());
   }
   if (url.pathname === "/api/ledger" && request.method === "PUT") {
-    const ledger = JSON.parse(await request.text()) as Ledger;
+    const ledger = normalizeLedger(
+      JSON.parse(await request.text()) as Ledger,
+    );
     for (const document of ledger.documents) {
       for (const record of document.records) delete record.matchesLedger;
     }
@@ -192,7 +202,7 @@ Deno.serve(async (request) => {
     function toggleDocumentMenu(){documentMenuOpen=!documentMenuOpen;renderDocumentPicker()}
     function counts(x){return states.map(s=>[s,x.records.filter(r=>r.status===s).length]).filter(([,count])=>count>0).map(([state,count])=>state+': '+count).join(' · ')||'no candidates'}
     function health(x){let count=s=>x.records.filter(r=>r.status===s).length;if(count('rejected'))return 'critical';if(!x.records.length||count('pending')||count('added')||count('edited'))return 'warning';return 'approved'}
-    function renderDocumentPicker(){let x=d.documents[currentDocument],trigger=document.querySelector('#document-trigger'),menu=document.querySelector('#document-menu');trigger.dataset.health=health(x);trigger.setAttribute('aria-expanded',String(documentMenuOpen));trigger.innerHTML='<span><span class="document-trigger-label">Document</span><br><span class="document-trigger-file" title="'+displayFile(x.file)+'">'+displayFile(x.file)+'</span></span><span class="document-trigger-counts">'+esc(counts(x))+'</span>';menu.hidden=!documentMenuOpen;menu.innerHTML=d.documents.map((item,i)=>'<button role="option" aria-selected="'+(i===currentDocument)+'" class="document-choice '+health(item)+' '+(i===currentDocument?'selected':'')+'" onclick="choose('+i+')"><span class="document-file" title="'+displayFile(item.file)+'">'+displayFile(item.file)+'</span><span class="document-counts">'+esc(counts(item))+'</span></button>').join('')}
+    function renderDocumentPicker(){let x=d.documents[currentDocument],trigger=document.querySelector('#document-trigger'),menu=document.querySelector('#document-menu');setCurrentFile(x.file);trigger.dataset.health=health(x);trigger.setAttribute('aria-expanded',String(documentMenuOpen));trigger.innerHTML='<span><span class="document-trigger-label">Document</span><br><span class="document-trigger-file" title="'+displayFile(x.file)+'">'+displayFile(x.file)+'</span></span><span class="document-trigger-counts">'+esc(counts(x))+'</span>';menu.hidden=!documentMenuOpen;menu.innerHTML=d.documents.map((item,i)=>'<button role="option" aria-selected="'+(i===currentDocument)+'" class="document-choice '+health(item)+' '+(i===currentDocument?'selected':'')+'" onclick="choose('+i+')"><span class="document-file" title="'+displayFile(item.file)+'">'+displayFile(item.file)+'</span><span class="document-counts">'+esc(counts(item))+'</span></button>').join('')}
     render=()=>{let x=d.documents[currentDocument];renderDocumentPicker();document.querySelector('main').innerHTML='<section class="review-document"><table><tr>'+columns.map(([,label])=>'<th>'+label+'</th>').join('')+'</tr>'+x.records.map((r,j)=>'<tr data-d='+currentDocument+' data-r='+j+' data-state="'+r.status+'" data-ledger-change="'+(r.matchesLedger===false)+'" oninput="markUnsaved(this)" onchange="markUnsaved(this)">'+cols.map(c=>'<td>'+field(r[c],c,r)+'</td>').join('')+'</tr>').join('')+'</table><button onclick="add('+currentDocument+')">Add row</button></section>'}
   </script>`;
   return new Response(page + documentPickerView, {

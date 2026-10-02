@@ -34,20 +34,20 @@ Deno.test("extracts an unmapped measurement candidate from a result row", () => 
   const candidate = parseLine(
     "example.pdf",
     1,
-    line(4, "1975-2 Bilirubin total : 0.40 mg/dL 0.10 - 1.20", 40, 600, [
+    line(4, "1975-2 Bilirubin total : 0.47 mg/dL 0.08 - 1.30", 40, 600, [
       ["1975-2", 40],
       ["Bilirubin", 80],
       ["total", 130],
       [":", 170],
-      ["0.40", 190],
+      ["0.47", 190],
       ["mg/dL", 230],
-      ["0.10", 300],
+      ["0.08", 300],
       ["-", 330],
-      ["1.20", 350],
+      ["1.30", 350],
     ]),
   );
   if (
-    !candidate || candidate.valueText !== "0.40" ||
+    !candidate || candidate.valueText !== "0.47" ||
     candidate.mappingStatus !== "unmapped"
   ) throw new Error("Expected an unmapped draft candidate");
 });
@@ -73,15 +73,38 @@ Deno.test("extracts a value-reference-unit result row", () => {
   ) throw new Error("Expected a value-reference-unit candidate");
 });
 
+Deno.test("removes decorative markers and dot leaders from a source label", () => {
+  const candidate = parseLine(
+    "example.pdf",
+    1,
+    line(4, "(*) Cholesterol . . . . : 212 mg/dL < 190", 40, 600, [
+      ["(*)", 40],
+      ["Cholesterol", 65],
+      [".", 130],
+      [".", 140],
+      [".", 150],
+      [".", 160],
+      [":", 170],
+      ["212", 190],
+      ["mg/dL", 230],
+      ["<", 300],
+      ["190", 315],
+    ]),
+  );
+  if (!candidate || candidate.sourceLabel !== "Cholesterol") {
+    throw new Error("Expected decorative label text to be removed");
+  }
+});
+
 Deno.test("accepts a unit extracted in the same cell as an aligned reference", () => {
   const lines = [
-    line(4, "Platelet width 11.0 9 - 17.5 %", 40, 600, [
+    line(4, "Platelet width 12.4 8 - 18 %", 40, 600, [
       ["Platelet", 40],
       ["width", 85],
-      ["11.0", 280],
-      ["9", 355],
+      ["12.4", 280],
+      ["8", 355],
       ["-", 370],
-      ["17.5", 380],
+      ["18", 380],
       ["%", 355],
     ]),
     line(5, "(PDW)", 40, 588, [["(PDW)", 40]]),
@@ -95,8 +118,8 @@ Deno.test("accepts a unit extracted in the same cell as an aligned reference", (
   );
   if (
     !block || block.candidate.sourceLabel !== "Platelet width (PDW)" ||
-    block.candidate.valueText !== "11.0" || block.candidate.unit !== "%" ||
-    block.candidate.referenceText !== "9 - 17.5"
+    block.candidate.valueText !== "12.4" || block.candidate.unit !== "%" ||
+    block.candidate.referenceText !== "8 - 18"
   ) throw new Error("Expected an aligned shared reference/unit cell");
 });
 
@@ -104,18 +127,18 @@ Deno.test("extracts a position-validated result with an empty unit cell", () => 
   const candidate = parseLine(
     "example.pdf",
     1,
-    line(4, "Example index 3.16 < 6", 40, 600, [
+    line(4, "Example index 2.8 < 5", 40, 600, [
       ["Example", 40],
       ["index", 85],
-      ["3.16", 180],
+      ["2.8", 180],
       ["<", 260],
-      ["6", 275],
+      ["5", 275],
     ]),
   );
   if (
     !candidate || candidate.sourceLabel !== "Example index" ||
-    candidate.valueText !== "3.16" || candidate.unit !== "" ||
-    candidate.referenceText !== "< 6"
+    candidate.valueText !== "2.8" || candidate.unit !== "" ||
+    candidate.referenceText !== "< 5"
   ) throw new Error("Expected a unitless draft candidate");
 });
 
@@ -276,6 +299,77 @@ Deno.test("keeps adjacent result-group headings as siblings", () => {
   }
 });
 
+Deno.test("keeps centred result-group headings as siblings", () => {
+  const lines = [
+    line(0, "TEST RESULT REFERENCE", 40, 660, [
+      ["TEST", 40],
+      ["RESULT", 300],
+      ["REFERENCE", 400],
+    ]),
+    line(1, "RED CELLS", 260, 640, [["RED", 260], ["CELLS", 290]]),
+    line(2, "RBC 4.8 3 - 5", 40, 620, [
+      ["RBC", 40],
+      ["4.8", 300],
+      ["3", 400],
+      ["-", 415],
+      ["5", 430],
+    ]),
+    line(3, "WHITE CELLS", 250, 600, [["WHITE", 250], ["CELLS", 290]]),
+    line(4, "WBC 4.2 3 - 5", 40, 580, [
+      ["WBC", 40],
+      ["4.2", 300],
+      ["3", 400],
+      ["-", 415],
+      ["5", 430],
+    ]),
+  ];
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    lines,
+    4,
+    { valueX: 300, unitX: 350, referenceX: 400, methodX: null },
+  );
+  if (!block || block.candidate.sourceSection !== "WHITE CELLS") {
+    throw new Error("Expected the centred group to replace the prior section");
+  }
+});
+
+Deno.test("does not treat a panel label after procedure metadata as a section", () => {
+  const lines = [
+    line(0, "TEST RESULT REFERENCE", 40, 660, [
+      ["TEST", 40],
+      ["RESULT", 300],
+      ["REFERENCE", 400],
+    ]),
+    line(1, "BIOCHEMISTRY", 40, 640, [["BIOCHEMISTRY", 40]]),
+    line(2, "Method: diazo assay", 40, 620, [
+      ["Method:", 40],
+      ["diazo", 300],
+      ["assay", 340],
+    ]),
+    line(3, "BILIRUBIN PANEL", 40, 600, [["BILIRUBIN", 40], ["PANEL", 90]]),
+    line(4, "Bilirubin 0.3 < 1.2", 40, 580, [
+      ["Bilirubin", 40],
+      ["0.3", 300],
+      ["<", 400],
+      ["1.2", 415],
+    ]),
+  ];
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    lines,
+    4,
+    { valueX: 300, unitX: 350, referenceX: 400, methodX: null },
+  );
+  if (!block || block.candidate.sourceSection !== "BIOCHEMISTRY") {
+    throw new Error(
+      "Expected procedure metadata to leave the source section unchanged",
+    );
+  }
+});
+
 Deno.test("retains a centred source heading above a textual table header", () => {
   const lines = [
     line(0, "BIOCHEMISTRY (blood)", 240, 640, [["BIOCHEMISTRY", 240], [
@@ -312,16 +406,16 @@ Deno.test("retains a centred source heading above a textual table header", () =>
 
 Deno.test("extracts a value-only row surrounded by a merged reference cell", () => {
   const lines = [
-    line(4, "< 20 mm/h Adults", 400, 612, [
+    line(4, "< 21 mm/h Adults", 400, 612, [
       ["<", 400],
-      ["20", 415],
+      ["21", 415],
       ["mm/h", 435],
       ["Adults", 470],
     ]),
-    line(5, "ESR 6", 40, 600, [["ESR", 40], ["6", 360]]),
-    line(6, "< 10 mm/h Children", 400, 588, [
+    line(5, "ESR 7", 40, 600, [["ESR", 40], ["7", 360]]),
+    line(6, "< 11 mm/h Children", 400, 588, [
       ["<", 400],
-      ["10", 415],
+      ["11", 415],
       ["mm/h", 435],
       ["Children", 470],
     ]),
@@ -335,9 +429,9 @@ Deno.test("extracts a value-only row surrounded by a merged reference cell", () 
   );
   if (
     !block || block.candidate.sourceLabel !== "ESR" ||
-    block.candidate.valueText !== "6" || block.candidate.unit !== "mm/h" ||
+    block.candidate.valueText !== "7" || block.candidate.unit !== "mm/h" ||
     block.candidate.referenceKind !== "table" ||
-    block.candidate.referenceText !== "< 20 mm/h Adults\n< 10 mm/h Children"
+    block.candidate.referenceText !== "< 21 mm/h Adults\n< 11 mm/h Children"
   ) throw new Error("Expected a value-only result with table reference");
 });
 
@@ -452,34 +546,62 @@ Deno.test("preserves a multiline reference block from its shared reference colum
   ) throw new Error("Expected generic table evidence");
 });
 
+Deno.test("keeps dot-led reference continuations in the reference column", () => {
+  const block = parseMeasurementBlock(
+    "example.pdf",
+    1,
+    [
+      line(4, "Cholesterol : 212 mg/dL Desired: < 190", 40, 600, [
+        ["Cholesterol", 40],
+        [":", 150],
+        ["212", 300],
+        ["mg/dL", 350],
+        ["Desired: < 190", 400],
+      ]),
+      line(5, ". . . Borderline - High: 200-239", 40, 588, [
+        [". . .", 40],
+        ["Borderline - High: 200-239", 400],
+      ]),
+      line(6, "High Risk: > 240", 400, 576, [["High Risk: > 240", 400]]),
+    ],
+    0,
+    { valueX: 300, unitX: 350, referenceX: 400, methodX: null },
+  );
+  if (
+    !block || block.candidate.referenceKind !== "table" ||
+    block.candidate.referenceText !==
+      "Desired: < 190\nBorderline - High: 200-239\nHigh Risk: > 240"
+  ) throw new Error("Expected dot leaders to be excluded from reference text");
+});
+
 Deno.test("assigns a vertically merged reference cell to its centred result", () => {
   const lines = [
-    line(4, "HDL 75 > 40 mg/dL", 40, 600, [
+    line(4, "HDL 71 > 42 mg/dL", 40, 600, [
       ["HDL", 40],
-      ["75", 180],
-      ["> 40", 270],
+      ["71", 180],
+      ["> 42", 270],
       ["mg/dL", 320],
     ]),
-    line(5, "< 100 mg/dL moderate risk", 270, 588),
+    line(5, "< 95 mg/dL moderate risk", 270, 588),
     line(6, "high risk", 270, 576),
-    line(7, "LDL 152 116 - 129 mg/dL", 40, 564, [
+    line(7, "LDL 146 110 - 128 mg/dL", 40, 564, [
       ["LDL", 40],
-      ["152", 180],
-      ["116", 270],
+      ["146", 180],
+      ["110", 270],
       ["-", 290],
-      ["129", 305],
+      ["128", 305],
       ["mg/dL", 340],
     ]),
-    line(8, "130 - 159 mg/dL", 270, 552),
+    line(8, "129 - 158 mg/dL", 270, 552),
   ];
   const columns = { valueX: 180, unitX: 340, referenceX: 270, methodX: null };
   const hdl = parseMeasurementBlock("example.pdf", 1, lines, 0, columns);
   const ldl = parseMeasurementBlock("example.pdf", 1, lines, 3, columns);
   if (
-    !hdl || hdl.candidate.referenceText !== "> 40" ||
+    !hdl || hdl.candidate.referenceText !== "> 42" ||
     !ldl || ldl.candidate.referenceKind !== "table" ||
     ldl.candidate.referenceText !==
-      "< 100 mg/dL moderate risk\nhigh risk\n116 - 129 mg/dL\n130 - 159 mg/dL"
+      "< 95 mg/dL moderate risk\nhigh risk\n110 - 128 mg/dL\n129 - 158 mg/dL"
   ) throw new Error("Expected the merged reference cell to stay with LDL");
 });
 
@@ -554,11 +676,11 @@ Deno.test("retains an aligned result with an empty reference cell", () => {
     "example.pdf",
     1,
     [
-      line(4, "Example analyte : 26.60 % method text", 40, 600, [
+      line(4, "Example analyte : 27.3 % method text", 40, 600, [
         ["Example", 40],
         ["analyte", 85],
         [":", 135],
-        ["26.60", 155],
+        ["27.3", 155],
         ["%", 185],
         ["method text", 360],
       ]),

@@ -140,6 +140,15 @@ function labelStartX(line: Line, sourceCode: string | null): number {
   return line.words[0]?.bounds.x ?? line.bounds.x;
 }
 
+/** Remove decorative lab-report markers and dot leaders from an analyte label. */
+function sourceLabelFrom(rawLabel: string): string {
+  return rawLabel
+    .replace(/^\d{1,5}-\d\s*/u, "")
+    .replace(/^\(\*\)\s*/u, "")
+    .replace(/\s+(?:\.\s*){3,}$/u, "")
+    .trim();
+}
+
 function median(values: number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
@@ -167,8 +176,7 @@ function parseMeasurement(
   const isUnitless = withoutUnit !== null;
   const rawLabel = match.groups.label.trim();
   const sourceCode = /^(\d{1,5}-\d)\b/u.exec(rawLabel)?.[1] ?? null;
-  const sourceLabel = rawLabel.replace(/^\d{1,5}-\d\s*(?:\(\*\)\s*)?/u, "")
-    .trim();
+  const sourceLabel = sourceLabelFrom(rawLabel);
   const analyte = findAnalyte(sourceLabel, sourceCode);
   const referenceText = match.groups.reference.trim();
   const valueX = wordX(line, match.groups.value);
@@ -241,8 +249,7 @@ function parseAlignedValueOnly(
   const rawLabel = labelWords.map((word) => word.text).join(" ").trim();
   if (!rawLabel) return null;
   const sourceCode = /^(\d{1,5}-\d)\b/u.exec(rawLabel)?.[1] ?? null;
-  const sourceLabel = rawLabel.replace(/^\d{1,5}-\d\s*(?:\(\*\)\s*)?/u, "")
-    .trim();
+  const sourceLabel = sourceLabelFrom(rawLabel);
   const analyte = findAnalyte(sourceLabel, sourceCode);
   return {
     candidate: {
@@ -338,7 +345,10 @@ function isMajorSectionHeading(
     return true;
   }
   const followingMeasurement = parseMeasurement("", 0, following);
-  const titleIsCentredOverResultColumns = line.bounds.x >= columns.valueX - 64;
+  const titleIsCentredOverResultColumns = isCenteredResultHeading(
+    line,
+    columns,
+  );
   const beginsNewTableWithResult = followingMeasurement !== null &&
     columnRelation(followingMeasurement, columns) !== null &&
     // A title immediately below a table header is a subsection within the
@@ -385,6 +395,28 @@ function isTableHeaderAfterTitle(line: Line, columns: ResultColumns): boolean {
       line.words.every((word) => word.bounds.x >= columns.valueX - 64));
 }
 
+/** A heading centred over the result columns starts a sibling result group. */
+function isCenteredResultHeading(
+  line: Line,
+  columns: ResultColumns | null,
+): boolean {
+  return columns !== null &&
+    line.bounds.x >= columns.valueX - 80 &&
+    line.bounds.x < columns.referenceX - 64;
+}
+
+/** A label after descriptive metadata identifies a local panel, not a section. */
+function followsNonResultMetadata(
+  lines: Line[],
+  index: number,
+  columns: ResultColumns,
+): boolean {
+  const previous = lines[index - 1];
+  if (!previous || !previous.text.includes(":")) return false;
+  return parseMeasurement("", 0, previous) === null &&
+    qualitativeCells(previous, columns.valueX) === null;
+}
+
 /** Return the nearest preceding major heading on the same PDF page. */
 function isSubsectionHeading(
   lines: Line[],
@@ -403,6 +435,7 @@ function isSubsectionHeading(
   if (isColumnHeader || qualitativeCells(line, columns.valueX) !== null) {
     return false;
   }
+  if (followsNonResultMetadata(lines, index, columns)) return false;
   const verticalGap = line.bounds.y - following.bounds.y;
   const maximumGap = Math.max(line.bounds.height, following.bounds.height) *
     2.5;
@@ -434,7 +467,14 @@ function sourceSectionFor(
       path = [];
     } else if (isSubsectionHeading(lines, previous, columns)) {
       const subsection = sourceHeadingText(lines[previous]);
-      path = path.length > 0 ? [path[0], subsection] : [subsection];
+      // Headings centred over result columns are visually peers of the
+      // preceding group. Left-aligned headings remain nested under the
+      // current major section.
+      path = isCenteredResultHeading(lines[previous], columns)
+        ? [subsection]
+        : path.length > 0
+        ? [path[0], subsection]
+        : [subsection];
     }
   }
   return path.length > 0 ? path.join(" / ") : null;
@@ -624,7 +664,9 @@ function parseQualitativeMeasurement(
   ) return null;
   const { labelWords, valueWords } = cells;
 
-  const sourceLabel = labelWords.map((word) => word.text).join(" ").trim();
+  const sourceLabel = sourceLabelFrom(
+    labelWords.map((word) => word.text).join(" "),
+  );
   const valueText = valueWords.map((word) => word.text).join(" ").trim();
   if (!sourceLabel || !valueText) return null;
   const sourceCode = /^(\d{1,5}-\d)\b/u.exec(sourceLabel)?.[1] ?? null;
@@ -649,6 +691,11 @@ function parseQualitativeMeasurement(
 
 type ReferenceContinuation = { lines: Line[]; endIndex: number };
 
+function contentStartX(line: Line): number {
+  return line.words.find((word) => /[^.\s]/u.test(word.text))?.bounds.x ??
+    line.bounds.x;
+}
+
 function isReferenceContinuation(
   line: Line,
   previous: Line,
@@ -660,9 +707,9 @@ function isReferenceContinuation(
     2.5;
   const leftTolerance = Math.max(12, previous.bounds.height * 2);
   return verticalGap >= 0 && verticalGap <= maximumGap &&
-    line.bounds.x >= parsed.referenceStartX! - leftTolerance &&
+    contentStartX(line) >= parsed.referenceStartX! - leftTolerance &&
     (columns?.methodX === null || columns?.methodX === undefined ||
-      line.bounds.x < columns.methodX - leftTolerance);
+      contentStartX(line) < columns.methodX - leftTolerance);
 }
 
 function followingReferenceLines(
@@ -826,7 +873,16 @@ export function parseMeasurementBlock(
     parsed.candidate.referenceKind = "table";
     parsed.candidate.referenceEvidence = evidence;
     parsed.candidate.referenceText = evidenceLines.flatMap((line) => {
-      if (line !== lines[index]) return [line.text];
+      if (line !== lines[index]) {
+        return [
+          referenceColumnText(
+            line,
+            parsed.referenceStartX!,
+            columns?.methodX ?? null,
+            null,
+          ) ?? line.text,
+        ];
+      }
       const ownReference = referenceColumnText(
         lines[index],
         parsed.referenceStartX!,
