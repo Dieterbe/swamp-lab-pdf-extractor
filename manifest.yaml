@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@dieter/lab-pdf-extractor"
-version: "2026.10.04.1"
+version: "2026.10.04.2"
 description: "Local digital-PDF laboratory-result extraction and human review"
 repository: "https://github.com/Dieterbe/swamp-lab-pdf-extractor"
 paths:

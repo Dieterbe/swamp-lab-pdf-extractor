@@ -435,6 +435,7 @@ async function exportReviewedLedger(
   args: { ledgerPath: string; outputPath: string },
   context: MethodContext,
 ): Promise<{ dataHandles: Array<{ name: string }> }> {
+  context.logger.info("Exporting canonical records from reviewed ledger");
   const ledger = ReviewedLedgerSchema.parse(
     JSON.parse(await Deno.readTextFile(args.ledgerPath)),
   );
@@ -457,11 +458,16 @@ async function exportReviewedLedger(
 /** Local, coordinate-aware digital-PDF layout extraction model. */
 export const model = {
   type: "@dieter/lab-pdf-extractor" as const,
-  version: "2026.10.04.1",
+  version: "2026.10.04.2",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
       toVersion: "2026.10.04.1",
+      description: "Version bump with no global-argument schema changes",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.04.2",
       description: "Version bump with no global-argument schema changes",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

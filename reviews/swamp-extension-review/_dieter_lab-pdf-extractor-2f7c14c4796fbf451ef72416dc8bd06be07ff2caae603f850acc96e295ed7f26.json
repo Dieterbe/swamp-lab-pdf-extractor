@@ -1,0 +1,22 @@
+{
+  "extension": "@dieter/lab-pdf-extractor",
+  "version": "2026.10.04.2",
+  "reviewedAt": "2026-10-04T22:46:10+03:00",
+  "dimensions": [
+    { "id": "credentials-secrets", "verdict": "pass" },
+    { "id": "logging-quality", "verdict": "pass" },
+    { "id": "error-handling", "verdict": "pass" },
+    { "id": "testing-completeness", "verdict": "pass" },
+    { "id": "idempotency-resilience", "verdict": "pass" },
+    { "id": "api-contracts", "verdict": "na", "note": "No external API calls." },
+    { "id": "resource-management", "verdict": "pass" },
+    { "id": "published-surface-hygiene", "verdict": "pass" },
+    { "id": "schema-strictness", "verdict": "pass" },
+    { "id": "lifetime-gc", "verdict": "pass" },
+    { "id": "crud-completeness", "verdict": "na", "note": "Local transformation model; no external resource lifecycle." },
+    { "id": "preflight-checks", "verdict": "pass" },
+    { "id": "instance-names", "verdict": "pass" },
+    { "id": "data-access", "verdict": "na", "note": "Methods do not read stored Swamp resources." },
+    { "id": "version-upgrades", "verdict": "pass" }
+  ]
+}

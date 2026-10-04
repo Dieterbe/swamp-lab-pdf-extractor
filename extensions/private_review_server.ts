@@ -89,8 +89,9 @@ async function load(): Promise<Ledger> {
     return existing.documents.length
       ? normalizeLedger(existing)
       : await draft();
-  } catch {
-    return await draft();
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return await draft();
+    throw error;
   }
 }
 function sameRecord(left: Row, right: Row): boolean {
