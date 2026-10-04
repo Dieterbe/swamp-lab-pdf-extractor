@@ -65,6 +65,23 @@ Deno.test("requires source context for context-dependent aliases", () => {
   ) throw new Error("Expected urine section to map sugar to urine glucose");
 });
 
+Deno.test("maps reviewed blood glucose labels to fasting glucose", () => {
+  for (
+    const label of [
+      "Γλυκόζη (GLUCOSE)",
+      "Γλυκόζη (GLU)",
+      "Glucose fasting [Mass/volume] in Blood in Serum or Plasma",
+    ]
+  ) {
+    if (
+      findAnalyte(label, null, "ΒΙΟΧΗΜΙΚΟΣ ΕΛΕΓΧΟΣ")?.id !==
+        "blood/fasting-glucose"
+    ) {
+      throw new Error(`Expected ${label} to map to fasting glucose`);
+    }
+  }
+});
+
 Deno.test("maps the reviewed Greek urine nitrite terminology", () => {
   for (const label of ["Νιτρικά", "Νιτρώδη"]) {
     if (

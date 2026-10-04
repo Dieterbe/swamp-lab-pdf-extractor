@@ -258,7 +258,7 @@ export const analytes: Analyte[] = [
     "Gamma glutamyl transferase [Enzymatic activity/volume] in Serum or Plasma (GGT)",
     "γ-GT",
   ]),
-  analyte("glucose", "Glucose", [
+  analyte("fasting-glucose", "Fasting glucose", [
     "Γλυκόζη (GLUCOSE)",
     "Γλυκόζη (GLU)",
     "Glucose fasting [Mass/volume] in Blood in Serum or Plasma",

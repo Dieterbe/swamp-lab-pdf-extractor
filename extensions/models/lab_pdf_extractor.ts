@@ -86,6 +86,7 @@ const CanonicalRecordSchema = z.object({
   sourceLabel: z.string(),
   sourceSection: z.string().nullable(),
   valueText: z.string(),
+  sourceUnit: z.string().nullable(),
   unit: z.string().nullable(),
   referenceText: z.string().nullable(),
   referenceKind: z.string(),
@@ -335,6 +336,15 @@ async function writeDocuments(
 }
 
 /** Build a fail-closed analysis export from fully confirmed review documents. */
+function normaliseCanonicalUnit(unit: string | null): string | null {
+  // This is presentation normalization only: preserve the source spelling
+  // separately and avoid converting between different physical units.
+  return unit?.replace(
+    /([mdnpuμ])l\b/gu,
+    (_match, prefix: string) => `${prefix}L`,
+  ) ?? null;
+}
+
 function canonicalExport(
   ledger: ReviewedLedger,
   generatedAt = new Date().toISOString(),
@@ -377,7 +387,8 @@ function canonicalExport(
         sourceLabel: record.sourceLabel,
         sourceSection: record.sourceSection,
         valueText: record.valueText,
-        unit: record.unit,
+        sourceUnit: record.unit,
+        unit: normaliseCanonicalUnit(record.unit),
         referenceText: record.referenceText,
         referenceKind: record.referenceKind,
         methodText: record.methodText,

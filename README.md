@@ -21,17 +21,32 @@ Candidate labels stay in the source language. This preserves what the PDF says;
 translation is not implemented yet.
 
 Candidate reports also include a canonical analyte ID such as
-`blood/glucose` or `urine/glucose`. The specimen prefix prevents values with
+`blood/fasting-glucose` or `urine/glucose`. The specimen prefix prevents values with
 the same printed label from being combined across samples. The source label and
-source section remain alongside that ID as provenance. The private review
-ledger deliberately keeps only those source fields; downstream code resolves
-the canonical ID from the reviewed record using the catalog.
+source section remain alongside that ID as provenance. Canonical export keeps
+the printed unit as `sourceUnit` and normalizes only its spelling in `unit`
+(for example, `mg/dl` to `mg/dL`). The private review ledger deliberately
+keeps only source fields; downstream code resolves the canonical ID from the
+reviewed record using the catalog.
 
 ### Greek urine nitrite label
 
-When a lab uses `Νιτρικά`, literally “nitrates”, our catalog maps it to `urine/nitrite`, because
-they probably meant nitrite (`Νιτρώδη`).  The original printed label remains in every source
-record, and `Νιτρώδη` is accepted as the conventional Greek spelling for future reports.
+When a lab uses `Νιτρικά`, literally “nitrates”, in a urine-chemistry/dipstick
+panel, the catalog maps it to `urine/nitrite`. A dipstick's infection indicator
+is nitrite (`Νιτρώδη`), produced when bacteria convert urinary nitrates; a
+literal nitrate mapping would misrepresent that measurement. The original
+printed label remains in every source record, and `Νιτρώδη` is accepted as the
+conventional Greek spelling for future reports.
+
+### Fasting glucose assumption
+
+All reviewed blood-glucose labels map to `blood/fasting-glucose`: one says
+“Glucose fasting” explicitly and the otherwise unqualified Greek labels occur
+in equivalent biochemistry panels with compatible units and reference ranges.
+This is a reviewed corpus-specific assumption, not a general inference rule. A
+future non-fasting measurement must have an explicit label such as Random
+Blood Glucose (RBG) and receive a distinct ID; HbA1c is already a separate,
+longer-term glycaemic measurement.
 
 Important: swamp model output may not be reliable. Only `reviewed-records.json`
 (manually reviewed through the web UI) records with status "approved"

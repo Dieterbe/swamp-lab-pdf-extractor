@@ -34,7 +34,7 @@ Deno.test("exports only complete approved documents with canonical provenance", 
     sourceLabel: "ALT(SGPT)",
     sourceSection: "BIOCHEMISTRY (blood)",
     valueText: "23",
-    unit: "U/L",
+    unit: "mg/dl",
     referenceText: "0 - 40",
     referenceKind: "range",
     methodText: null,
@@ -61,6 +61,8 @@ Deno.test("exports only complete approved documents with canonical provenance", 
     exported.records.length !== 1 ||
     exported.records[0].analyteId !== "blood/alanine-aminotransferase" ||
     exported.records[0].analyteShortLabel !== "ALT" ||
+    exported.records[0].sourceUnit !== "mg/dl" ||
+    exported.records[0].unit !== "mg/dL" ||
     !exported.records[0].analyteAliases.includes("SGPT") ||
     exported.skippedDocuments[0]?.reasons[0] !== "not-complete"
   ) {
