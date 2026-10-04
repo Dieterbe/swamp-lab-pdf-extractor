@@ -19,6 +19,7 @@ type DocumentEntry = {
   file: string;
   sourceSha256: string;
   pageCount: number;
+  sourceDate: string | null;
   sourceIssuer: string | null;
   records: Row[];
   parsingAssertion?: "complete";
@@ -42,6 +43,7 @@ function normalizeUnit(unit: string | null): string | null {
 
 function normalizeLedger(ledger: Ledger): Ledger {
   for (const document of ledger.documents) {
+    document.sourceDate = document.sourceDate || null;
     document.sourceIssuer = document.sourceIssuer?.trim() || null;
     for (const record of document.records) {
       record.unit = normalizeUnit(record.unit);
@@ -74,6 +76,7 @@ async function draft(): Promise<Ledger> {
       file: `fixtures/${entry.name}`,
       sourceSha256: document.sourceSha256,
       pageCount: document.pageCount,
+      sourceDate: null,
       sourceIssuer: null,
       records,
     });
@@ -113,7 +116,10 @@ function retainAssertedRecords(next: Ledger, saved: Ledger): Ledger {
       document.file === savedDocument.file
     );
     if (!nextDocument) continue;
-    if (nextDocument.sourceIssuer !== savedDocument.sourceIssuer) {
+    if (
+      nextDocument.sourceDate !== savedDocument.sourceDate ||
+      nextDocument.sourceIssuer !== savedDocument.sourceIssuer
+    ) {
       delete nextDocument.parsingAssertion;
       continue;
     }
@@ -150,7 +156,9 @@ async function freshLedger(): Promise<Ledger> {
       if (matchingRecord) record.status = matchingRecord.status;
     }
     document.sourceIssuer = previous.sourceIssuer;
+    document.sourceDate = previous.sourceDate;
     if (previous.parsingAssertion !== "complete") continue;
+    if (!previous.sourceDate) continue;
     if (!previous.sourceIssuer) continue;
 
     document.parsingAssertion = "complete";
@@ -219,10 +227,10 @@ const page = `<!doctype html>
   .document-choice.approved{border-left-color:var(--green)}.document-choice.approved .document-file{color:var(--green)}.document-choice.warning{border-left-color:var(--yellow)}.document-choice.warning .document-file{color:var(--yellow)}.document-choice.critical{border-left-color:var(--red)}.document-choice.critical .document-file{color:var(--red)}.document-choice.selected{background:var(--surface-active)}
   .current-file{display:grid;gap:3px;margin-top:9px;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
   .current-file input{color:var(--cyan);cursor:text;letter-spacing:0;text-transform:none}
-  .source-issuer{display:grid;gap:3px;margin:0 0 14px;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}.source-issuer input{border-bottom:1px solid var(--line-strong);color:var(--cyan);letter-spacing:0;text-transform:none}
+  .provenance-fields{display:grid;grid-template-columns:minmax(12rem,1fr) minmax(18rem,2fr);gap:18px;margin:0 0 14px}.provenance-fields label{display:grid;gap:3px;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}.provenance-fields input{border-bottom:1px solid var(--line-strong);color:var(--cyan);letter-spacing:0;text-transform:none}
   .assertion-note{margin:0 0 16px;color:var(--muted);font-size:12px;letter-spacing:.03em}.assertion-note.complete{color:var(--green)}.assertion-note.failed{color:var(--red)}
   .loading{color:var(--yellow);letter-spacing:.05em;text-transform:uppercase}
-  @media(max-width:950px){.shell{padding:28px 20px}header{margin:-16px 0 22px}.header-content{gap:14px}.document-picker{width:64vw}.actions{flex-wrap:wrap}.document-trigger,.document-choice{grid-template-columns:minmax(0,1fr)}}
+  @media(max-width:950px){.shell{padding:28px 20px}header{margin:-16px 0 22px}.header-content{gap:14px}.document-picker{width:64vw}.actions{flex-wrap:wrap}.document-trigger,.document-choice{grid-template-columns:minmax(0,1fr)}.provenance-fields{grid-template-columns:1fr}}
 </style>
 <div class="shell">
   <header><div class="header-content"><div><h1>Lab PDF review</h1><p class="description">Edit candidate rows, choose their decision, or add records.<br>Saving writes only <code>reviewed-records.json</code>.</p><div class="document-picker"><button id="document-trigger" class="document-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" onclick="toggleDocumentMenu()"></button><div id="document-menu" class="document-menu" role="listbox" hidden></div></div><label class="current-file"><span>Selected filename — click to select</span><input id="current-file" readonly onclick="this.select()"></label></div><div class="actions"><span id="save-notice" class="save-notice" role="status" aria-live="polite"></span><button id="assert-complete" type="button" onclick="assertComplete()">Assert parsing complete</button><button onclick="save()">Save</button></div></div></header>
@@ -242,7 +250,7 @@ const page = `<!doctype html>
   function add(i){captureVisibleRows();let document=d.documents[i],record={status:'added',page:1,sourceLabel:'',sourceSection:null,valueText:'',unit:'',referenceText:null,referenceKind:'missing',methodText:null,matchesLedger:false};if(document.parsingAssertion==='complete'){record.assertionViolation='unexpected';document.assertionChanges={unexpected:(document.assertionChanges?.unexpected||0)+1,missing:document.assertionChanges?.missing||0}}document.records.push(record);render()}
   let saveNoticeTimer;
   function showSaved(message='Saved'){let notice=document.querySelector('#save-notice');notice.textContent=message;notice.classList.add('visible');clearTimeout(saveNoticeTimer);saveNoticeTimer=setTimeout(()=>notice.classList.remove('visible'),2200)}
-  async function save(message='Saved'){captureVisibleRows();captureSourceIssuer();await fetch('/api/ledger',{method:'PUT',body:JSON.stringify(d)});d.documents.forEach(x=>x.records.forEach(r=>r.matchesLedger=true));baseline=structuredClone(d);render();showSaved(message)}
+  async function save(message='Saved'){captureVisibleRows();captureProvenance();await fetch('/api/ledger',{method:'PUT',body:JSON.stringify(d)});d.documents.forEach(x=>x.records.forEach(r=>r.matchesLedger=true));baseline=structuredClone(d);render();showSaved(message)}
   init()
 </script>`;
 Deno.serve(async (request) => {
@@ -269,18 +277,18 @@ Deno.serve(async (request) => {
   const documentPickerView = `<script>
     let currentDocument=0,documentMenuOpen=false;
     let states=['pending','approved','edited','rejected','added'];
-    function choose(i){captureVisibleRows();captureSourceIssuer();currentDocument=i;documentMenuOpen=false;render()}
+    function choose(i){captureVisibleRows();captureProvenance();currentDocument=i;documentMenuOpen=false;render()}
     function toggleDocumentMenu(){documentMenuOpen=!documentMenuOpen;renderDocumentPicker()}
     function assertionTotal(x){return (x.assertionChanges?.unexpected||0)+(x.assertionChanges?.missing||0)}
     function assertionText(x){let changes=x.assertionChanges;if(assertionTotal(x))return 'assertion failed: '+(changes.unexpected?'+'+changes.unexpected+' unexpected':'')+(changes.unexpected&&changes.missing?' · ':'')+(changes.missing?'-'+changes.missing+' missing':'');return x.parsingAssertion==='complete'?'parsing complete':''}
     function counts(x){let recordCounts=states.map(s=>[s,x.records.filter(r=>r.status===s).length]).filter(([,count])=>count>0).map(([state,count])=>state+': '+count).join(' · ')||'no candidates',assertion=assertionText(x);return assertion?recordCounts+' · '+assertion:recordCounts}
-    function health(x){let count=s=>x.records.filter(r=>r.status===s).length;if(assertionTotal(x)||count('rejected'))return 'critical';if(x.parsingAssertion==='complete'&&x.sourceIssuer&&x.records.every(r=>r.status==='approved'))return 'approved';return 'warning'}
-    function captureSourceIssuer(){let input=document.querySelector('#source-issuer');if(!input)return;let x=d.documents[currentDocument],issuer=input.value.trim()||null;if(x.sourceIssuer===issuer)return;x.sourceIssuer=issuer;if(x.parsingAssertion==='complete'){delete x.parsingAssertion;delete x.assertionChanges}}
-    function renderAssertionAction(x){let button=document.querySelector('#assert-complete'),hasIssuer=!!String(x.sourceIssuer??'').trim(),hasPending=x.records.some(r=>r.status==='pending'),hasViolations=assertionTotal(x)>0;button.disabled=x.parsingAssertion==='complete'||!hasIssuer||hasPending||hasViolations;button.textContent=x.parsingAssertion==='complete'?'Parsing complete':'Assert parsing complete';button.title=!hasIssuer?'Set the report issuer before asserting parsing complete':hasPending?'Resolve all pending rows before asserting parsing complete':hasViolations?'Resolve assertion changes before asserting parsing complete':'Lock the currently reviewed parsing result as complete'}
+    function health(x){let count=s=>x.records.filter(r=>r.status===s).length;if(assertionTotal(x)||count('rejected'))return 'critical';if(x.parsingAssertion==='complete'&&x.sourceDate&&x.sourceIssuer&&x.records.every(r=>r.status==='approved'))return 'approved';return 'warning'}
+    function captureProvenance(){let dateInput=document.querySelector('#source-date'),issuerInput=document.querySelector('#source-issuer');if(!dateInput||!issuerInput)return;let x=d.documents[currentDocument],date=dateInput.value||null,issuer=issuerInput.value.trim()||null;if(x.sourceDate===date&&x.sourceIssuer===issuer)return;x.sourceDate=date;x.sourceIssuer=issuer;if(x.parsingAssertion==='complete'){delete x.parsingAssertion;delete x.assertionChanges}}
+    function renderAssertionAction(x){let button=document.querySelector('#assert-complete'),hasDate=!!x.sourceDate,hasIssuer=!!String(x.sourceIssuer??'').trim(),hasPending=x.records.some(r=>r.status==='pending'),hasViolations=assertionTotal(x)>0;button.disabled=x.parsingAssertion==='complete'||!hasDate||!hasIssuer||hasPending||hasViolations;button.textContent=x.parsingAssertion==='complete'?'Parsing complete':'Assert parsing complete';button.title=!hasDate?'Set the report date before asserting parsing complete':!hasIssuer?'Set the report issuer before asserting parsing complete':hasPending?'Resolve all pending rows before asserting parsing complete':hasViolations?'Resolve assertion changes before asserting parsing complete':'Lock the currently reviewed parsing result as complete'}
     function renderDocumentPicker(){let x=d.documents[currentDocument],trigger=document.querySelector('#document-trigger'),menu=document.querySelector('#document-menu');setCurrentFile(x.file);renderAssertionAction(x);trigger.dataset.health=health(x);trigger.setAttribute('aria-expanded',String(documentMenuOpen));trigger.innerHTML='<span><span class="document-trigger-label">Document</span><br><span class="document-trigger-file" title="'+displayFile(x.file)+'">'+displayFile(x.file)+'</span></span><span class="document-trigger-counts">'+esc(counts(x))+'</span>';menu.hidden=!documentMenuOpen;menu.innerHTML=d.documents.map((item,i)=>'<button role="option" aria-selected="'+(i===currentDocument)+'" class="document-choice '+health(item)+' '+(i===currentDocument?'selected':'')+'" onclick="choose('+i+')"><span class="document-file" title="'+displayFile(item.file)+'">'+displayFile(item.file)+'</span><span class="document-counts">'+esc(counts(item))+'</span></button>').join('')}
-    function assertComplete(){captureVisibleRows();captureSourceIssuer();let x=d.documents[currentDocument];if(!x.sourceIssuer||x.records.some(r=>r.status==='pending')||assertionTotal(x))return;x.parsingAssertion='complete';x.assertionChanges={unexpected:0,missing:0};save('Parsing assertion saved')}
-    function issuerField(x){return '<label class="source-issuer"><span>Report issuer</span><input id="source-issuer" value="'+esc(x.sourceIssuer)+'" oninput="captureSourceIssuer()"></label>'}
-    render=()=>{let x=d.documents[currentDocument],assertion=assertionText(x),note=assertion?'<p class="assertion-note '+(assertionTotal(x)?'failed':'complete')+'">'+esc(assertion)+(assertionTotal(x)?'. Re-extraction differs from the asserted result.':'')+'</p>':'';renderDocumentPicker();document.querySelector('main').innerHTML='<section class="review-document">'+note+issuerField(x)+'<table><tr>'+columns.map(([,label])=>'<th>'+label+'</th>').join('')+'</tr>'+x.records.map((r,j)=>'<tr data-d='+currentDocument+' data-r='+j+' data-state="'+r.status+'" data-ledger-change="'+(r.matchesLedger===false)+'" '+(r.assertionViolation?'data-assertion-violation="'+r.assertionViolation+'" title="Parser assertion: '+r.assertionViolation+' record"':'')+' oninput="markUnsaved(this)" onchange="markUnsaved(this)">'+cols.map(c=>'<td>'+field(r[c],c,r)+'</td>').join('')+'</tr>').join('')+'</table><button onclick="add('+currentDocument+')">Add row</button></section>'}
+    function assertComplete(){captureVisibleRows();captureProvenance();let x=d.documents[currentDocument];if(!x.sourceDate||!x.sourceIssuer||x.records.some(r=>r.status==='pending')||assertionTotal(x))return;x.parsingAssertion='complete';x.assertionChanges={unexpected:0,missing:0};save('Parsing assertion saved')}
+    function provenanceFields(x){return '<div class="provenance-fields"><label><span>Report date</span><input id="source-date" type="date" value="'+esc(x.sourceDate)+'" onchange="captureProvenance()"></label><label><span>Report issuer</span><input id="source-issuer" value="'+esc(x.sourceIssuer)+'" oninput="captureProvenance()"></label></div>'}
+    render=()=>{let x=d.documents[currentDocument],assertion=assertionText(x),note=assertion?'<p class="assertion-note '+(assertionTotal(x)?'failed':'complete')+'">'+esc(assertion)+(assertionTotal(x)?'. Re-extraction differs from the asserted result.':'')+'</p>':'';renderDocumentPicker();document.querySelector('main').innerHTML='<section class="review-document">'+note+provenanceFields(x)+'<table><tr>'+columns.map(([,label])=>'<th>'+label+'</th>').join('')+'</tr>'+x.records.map((r,j)=>'<tr data-d='+currentDocument+' data-r='+j+' data-state="'+r.status+'" data-ledger-change="'+(r.matchesLedger===false)+'" '+(r.assertionViolation?'data-assertion-violation="'+r.assertionViolation+'" title="Parser assertion: '+r.assertionViolation+' record"':'')+' oninput="markUnsaved(this)" onchange="markUnsaved(this)">'+cols.map(c=>'<td>'+field(r[c],c,r)+'</td>').join('')+'</tr>').join('')+'</table><button onclick="add('+currentDocument+')">Add row</button></section>'}
   </script>`;
   return new Response(page + documentPickerView, {
     headers: { "content-type": "text/html; charset=utf-8" },
