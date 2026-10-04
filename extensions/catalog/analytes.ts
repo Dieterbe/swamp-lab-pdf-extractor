@@ -115,15 +115,19 @@ const analyte = (
   aliases: string[],
   sourceCodes: string[] = [],
   requiredSpecimen?: Specimen,
-): Analyte => ({
-  id: canonicalId(id),
-  displayName,
-  sourceAliases: aliases,
-  sourceCodes,
-  shortLabel: canonicalPresentation[canonicalId(id)]?.shortLabel ?? null,
-  canonicalAliases: canonicalPresentation[canonicalId(id)]?.aliases ?? [],
-  requiredSpecimen,
-});
+): Analyte => {
+  const canonical = canonicalId(id);
+  return {
+    id: canonical,
+    displayName,
+    sourceAliases: aliases,
+    sourceCodes,
+    shortLabel: canonicalPresentation[canonical]?.shortLabel ?? null,
+    canonicalAliases: canonicalPresentation[canonical]?.aliases ?? [],
+    requiredSpecimen: requiredSpecimen ??
+      (canonical.startsWith("urine/") ? "urine" : undefined),
+  };
+};
 
 const canonicalPresentation: Record<
   string,
@@ -225,12 +229,18 @@ export const analytes: Analyte[] = [
     "C reactive protein [Mass/volume] , CRP , in Serum or Plasma",
   ]),
   analyte("cortisol", "Cortisol", ["Κορτιζόλη"]),
-  analyte("creatinine", "Creatinine", [
+  analyte(
+    "creatinine",
     "Creatinine",
-    "Creatinine [Mass/volume] in Blood serum or plasma",
-    "Κρεατινίνη (CREATININE)",
-    "Κρεατινίνη (CREA)",
-  ]),
+    [
+      "Creatinine",
+      "Creatinine [Mass/volume] in Blood serum or plasma",
+      "Κρεατινίνη (CREATININE)",
+      "Κρεατινίνη (CREA)",
+    ],
+    [],
+    "blood",
+  ),
   analyte("cystatin-c", "Cystatin C", ["Cystatin C"]),
   analyte("egfr", "Estimated glomerular filtration rate", ["eGFR"]),
   analyte("eosinophils-absolute", "Eosinophils, absolute", [

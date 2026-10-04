@@ -18,7 +18,7 @@ Deno.test("maps reviewed Greek and English source labels to stable identities", 
       "Εύρος κατν. μεγέθους Αιμοπεταλίων (PDW)",
       "blood/platelet-distribution-width",
     ],
-    ["Λέυκωμα", "urine/protein"],
+    ["Λέυκωμα", "urine/protein", "ΓΕΝΙΚΗ ΕΞΕΤΑΣΗ ΟΥΡΩΝ"],
   ];
   for (const [label, id, section] of cases) {
     if (findAnalyte(label, null, section)?.id !== id) {
@@ -157,6 +157,21 @@ Deno.test("recognizes reviewed broad blood headings and never falls back across 
   }
   if (findAnalyte("pH", null, "ΒΙΟΧΗΜΙΚΟΣ ΕΛΕΓΧΟΣ") !== null) {
     throw new Error("Expected blood pH not to fall back to urine pH");
+  }
+});
+
+Deno.test("fails closed when a specimen heading is unfamiliar", () => {
+  for (
+    const [label, section] of [
+      ["Creatinine", "Urinalysis"],
+      ["Ερυθρά αιμοσφαίρια", "Urinalysis"],
+      ["Επιθήλια", "ΕΞΕΤΑΣΗ ΟΥΡΟΥ"],
+      ["pH", "ΕΞΕΤΑΣΗ ΟΥΡΟΥ"],
+    ]
+  ) {
+    if (findAnalyte(label, null, section) !== null) {
+      throw new Error(`Expected ${label} to remain unmapped in ${section}`);
+    }
   }
 });
 
