@@ -184,7 +184,6 @@ const canonicalPresentation: Record<
   "blood/sodium": { shortLabel: "Na", aliases: ["Na"] },
   "blood/potassium": { shortLabel: "K", aliases: ["K"] },
   "blood/thyroid-stimulating-hormone": { shortLabel: "TSH", aliases: ["TSH"] },
-  "blood/urate": { shortLabel: "UA", aliases: ["UA", "Urate"] },
   "blood/vldl-cholesterol": { shortLabel: "VLDL", aliases: ["VLDL"] },
   "blood/white-blood-cells": { shortLabel: "WBC", aliases: ["WBC"] },
   "urine/ph": { shortLabel: "pH", aliases: ["pH"] },
@@ -413,7 +412,9 @@ export const analytes: Analyte[] = [
   ),
 
   analyte("urine-appearance", "Urine appearance", ["Όψη"]),
-  analyte("urine-bacteria", "Urine microorganisms", ["Μικροοργανισμοί"]),
+  analyte("urine-microorganisms", "Urine microorganisms", [
+    "Μικροοργανισμοί",
+  ]),
   analyte("urine-bilirubin", "Urine bilirubin", ["Χολοχρωστικές"]),
   analyte("urine-color", "Urine color", ["Χροιά"]),
   analyte("urine-crystals", "Urine crystals", ["Κρύσταλλοι"]),

@@ -53,6 +53,17 @@ Deno.test("keeps canonical UI shorthands separate from printed source aliases", 
   ) throw new Error("Expected distinct source and canonical alias metadata");
 });
 
+Deno.test("avoids the ambiguous urate shorthand and names urine microorganisms", () => {
+  const urate = findAnalyte("Urate (UA) [Mass/volume] in Serum or Plasma");
+  if (urate?.shortLabel !== null || urate.canonicalAliases.length !== 0) {
+    throw new Error("Expected urate not to use the ambiguous UA shorthand");
+  }
+  if (
+    findAnalyte("Μικροοργανισμοί", null, "ΓΕΝΙΚΗ ΕΞΕΤΑΣΗ ΟΥΡΩΝ")?.id !==
+      "urine/microorganisms"
+  ) throw new Error("Expected the source label to map to urine microorganisms");
+});
+
 Deno.test("requires source context for context-dependent aliases", () => {
   if (findAnalyte("Σάκχαρο") !== null) {
     throw new Error(
