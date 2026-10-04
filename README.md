@@ -22,6 +22,11 @@ a canonical result dataset. It does this via:
 4) Exports parsing-complete, fully approved documents as canonical results
    for downstream processing (`canonical-records.json`).
 
+Before declaring a document parsing-complete, enter its reviewed report issuer:
+the lab, clinic, specialist, or other authoritative source. This is required so
+each canonical record retains the identity of the document's issuer; guessing it
+from report text could confuse an issuer with patient or contact details.
+
 All input PDF's, reviewed records, and canonical records are kept in a
 git-ignored directory such as `.private`.
 
@@ -91,6 +96,7 @@ swamp model method run @dieter/lab-pdf-extractor exportCanonical lab-pdf \
 The export:
 
 * preserves source provenance
+* repeats the reviewed `sourceIssuer` on every record
 * adds the canonical analyte ID, display name, preferred short label, normalized
   unit, and scoped aliases
 * fails if an included record cannot be mapped unambiguously

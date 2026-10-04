@@ -68,6 +68,7 @@ const ReviewedDocumentSchema = z.object({
   file: z.string().min(1),
   sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
   pageCount: z.number().int().positive(),
+  sourceIssuer: z.string().min(1).nullable().default(null),
   records: z.array(ReviewedRecordSchema),
   parsingAssertion: z.literal("complete").optional(),
 });
@@ -79,6 +80,7 @@ const CanonicalRecordSchema = z.object({
   sourceFile: z.string().min(1),
   sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
   page: z.number().int().positive(),
+  sourceIssuer: z.string().min(1),
   analyteId: z.string().min(1),
   analyteName: z.string().min(1),
   analyteShortLabel: z.string().nullable(),
@@ -103,7 +105,11 @@ const CanonicalExportSchema = z.object({
   })),
   skippedDocuments: z.array(z.object({
     file: z.string().min(1),
-    reasons: z.array(z.enum(["not-complete", "not-all-approved"])).min(1),
+    reasons: z.array(z.enum([
+      "not-complete",
+      "not-all-approved",
+      "missing-source-issuer",
+    ])).min(1),
   })),
   records: z.array(CanonicalRecordSchema),
 });
@@ -354,14 +360,25 @@ function canonicalExport(
   const records: CanonicalExport["records"] = [];
 
   for (const document of ledger.documents) {
-    const reasons: Array<"not-complete" | "not-all-approved"> = [];
+    const reasons: Array<
+      "not-complete" | "not-all-approved" | "missing-source-issuer"
+    > = [];
     if (document.parsingAssertion !== "complete") reasons.push("not-complete");
     if (!document.records.every((record) => record.status === "approved")) {
       reasons.push("not-all-approved");
     }
+    if (!document.sourceIssuer) reasons.push("missing-source-issuer");
     if (reasons.length > 0) {
       skippedDocuments.push({ file: document.file, reasons });
       continue;
+    }
+    // The eligibility check above guarantees this, but make the required
+    // canonical value explicit rather than passing a nullable field through.
+    const sourceIssuer = document.sourceIssuer;
+    if (sourceIssuer === null) {
+      throw new Error(
+        `Complete document ${document.file} has no source issuer`,
+      );
     }
 
     includedDocuments.push({
@@ -380,6 +397,7 @@ function canonicalExport(
         sourceFile: document.file,
         sourceSha256: document.sourceSha256,
         page: record.page,
+        sourceIssuer,
         analyteId: analyte.id,
         analyteName: analyte.displayName,
         analyteShortLabel: analyte.shortLabel,

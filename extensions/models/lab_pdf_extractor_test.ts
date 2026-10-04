@@ -46,6 +46,7 @@ Deno.test("exports only complete approved documents with canonical provenance", 
         file: "fixtures/complete.pdf",
         sourceSha256: "a".repeat(64),
         pageCount: 1,
+        sourceIssuer: "Example Laboratory",
         parsingAssertion: "complete",
         records: [record],
       },
@@ -53,6 +54,7 @@ Deno.test("exports only complete approved documents with canonical provenance", 
         file: "fixtures/incomplete.pdf",
         sourceSha256: "b".repeat(64),
         pageCount: 1,
+        sourceIssuer: null,
         records: [record],
       },
     ],
@@ -60,11 +62,13 @@ Deno.test("exports only complete approved documents with canonical provenance", 
   if (
     exported.records.length !== 1 ||
     exported.records[0].analyteId !== "blood/alanine-aminotransferase" ||
+    exported.records[0].sourceIssuer !== "Example Laboratory" ||
     exported.records[0].analyteShortLabel !== "ALT" ||
     exported.records[0].sourceUnit !== "mg/dl" ||
     exported.records[0].unit !== "mg/dL" ||
     !exported.records[0].analyteAliases.includes("SGPT") ||
-    exported.skippedDocuments[0]?.reasons[0] !== "not-complete"
+    exported.skippedDocuments[0]?.reasons[0] !== "not-complete" ||
+    !exported.skippedDocuments[0]?.reasons.includes("missing-source-issuer")
   ) {
     throw new Error(
       "Expected only strict canonical records from complete documents",
@@ -80,6 +84,7 @@ Deno.test("fails canonical export when a complete record is unmapped", () => {
         file: "fixtures/complete.pdf",
         sourceSha256: "a".repeat(64),
         pageCount: 1,
+        sourceIssuer: "Example Laboratory",
         parsingAssertion: "complete",
         records: [{
           status: "approved",
