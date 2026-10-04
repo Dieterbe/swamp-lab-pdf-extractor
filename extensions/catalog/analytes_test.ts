@@ -8,6 +8,10 @@ import {
 Deno.test("maps reviewed Greek and English source labels to stable identities", () => {
   const cases = [
     ["ALT(SGPT)", "blood/alanine-aminotransferase"],
+    [
+      "Follitropin (FSH) [Units/volume]in Serum or Plasma",
+      "blood/follicle-stimulating-hormone",
+    ],
     ["Αιμοσφαιρίνη (HGB)", "blood/hemoglobin", "ΓΕΝΙΚΗ ΕΞΕΤΑΣΗ ΑΙΜΑΤΟΣ"],
     ["ΤΚΕ (ESR)", "blood/erythrocyte-sedimentation-rate"],
     [

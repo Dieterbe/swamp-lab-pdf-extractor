@@ -124,6 +124,18 @@ normalizes unit spelling without converting quantities:
 Other interpretation remains downstream work. For example, a unitless VLDL
 result with a `< 32` reference is most likely in mg/dL.
 
+### Atherogenic index
+
+The formula behind an A.I. result is not recorded, so values from different
+labs may not be comparable. Future work may detect the laboratory and track
+its formula separately.
+
+### LDL cholesterol
+
+LDL results do not state whether they are directly measured or calculated, so
+the method must not be assumed. Future work may detect the laboratory or record
+an explicit method.
+
 ### Greek urine nitrite label
 
 When a lab uses `Νιτρικά`, literally “nitrates”, in a urine-chemistry/dipstick

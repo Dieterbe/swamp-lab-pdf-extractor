@@ -285,7 +285,7 @@ export const analytes: Analyte[] = [
   ]),
   analyte("ldl-cholesterol", "LDL cholesterol", ["LDL", "LDL Cholesterol"]),
   analyte("leptin", "Leptin", ["ΛΕΠΤΙΝΗ"]),
-  analyte("follitropin", "Follicle-stimulating hormone", [
+  analyte("follicle-stimulating-hormone", "Follicle-stimulating hormone", [
     "Follitropin (FSH) [Units/volume]in Serum or Plasma",
   ]),
   analyte("luteinizing-hormone", "Luteinizing hormone", [
