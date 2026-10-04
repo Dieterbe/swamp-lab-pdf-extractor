@@ -104,6 +104,21 @@ The export:
 The canonical analyte ID combines a high-level specimen prefix with the analyte, e.g.:
 `blood/fasting-glucose` or `urine/glucose`.
 
+### View selected trends
+
+Render a local Markdown trend table for testosterone, LDL, HDL, ApoB, and
+triglycerides:
+
+```sh
+~/.swamp/deno/deno run --allow-read tools/canonical_trends.ts \
+  --input .private/canonical-records.json
+```
+
+Use `--analytes` with a comma-separated list of canonical IDs to choose other
+measurements. The script only converts a molar result when its canonical ID and
+source unit match an explicit conversion rule; otherwise it preserves the
+reported value and unit.
+
 ## Limits
 
 ### New lab result formats and analyte terminology requires further development
