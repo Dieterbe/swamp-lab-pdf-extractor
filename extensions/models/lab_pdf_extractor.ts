@@ -430,8 +430,15 @@ async function exportReviewedLedger(
 /** Local, coordinate-aware digital-PDF layout extraction model. */
 export const model = {
   type: "@dieter/lab-pdf-extractor" as const,
-  version: "2026.09.30.1",
+  version: "2026.10.04.1",
   globalArguments: GlobalArgsSchema,
+  upgrades: [
+    {
+      toVersion: "2026.10.04.1",
+      description: "Version bump with no global-argument schema changes",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   resources: {
     document: {
       description:
